@@ -1,116 +1,135 @@
 <!DOCTYPE html>
 <html lang="pt-BR">
+
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-  <title>Sinal IPTV</title>
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1.0, viewport-fit=cover"
+  >
+
+  <meta
+    name="theme-color"
+    content="#07080c"
+  >
 
   <meta
     name="description"
-    content="Sinal IPTV — experiência premium para suas playlists."
+    content="SINAL IPTV — sua experiência de entretenimento."
   >
 
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <title>SINAL IPTV</title>
 
   <link
-    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
     rel="stylesheet"
+    href="styles.css"
   >
-
-  <link rel="stylesheet" href="styles.css">
 </head>
 
 <body>
 
-  <div id="toastContainer"></div>
+  <div id="app">
 
-  <!-- =====================================================
-       TELA DE CONEXÃO
-       ===================================================== -->
+    <!-- =========================
+         TELA DE CONFIGURAÇÃO
+    ========================== -->
 
-  <section id="connectionScreen" class="connection-screen">
+    <section
+      id="setupView"
+      class="setup-view"
+    >
 
-    <div class="connection-background"></div>
+      <div class="setup-background"></div>
 
-    <div class="connection-content">
+      <header class="setup-header">
 
-      <div class="brand brand-large">
-        <div class="brand-mark">S</div>
+        <div class="brand">
 
-        <div class="brand-text">
-          <strong>SINAL</strong>
-          <span>IPTV</span>
+          <span class="brand-symbol">
+            S
+          </span>
+
+          <span class="brand-name">
+            SINAL <strong>IPTV</strong>
+          </span>
+
         </div>
-      </div>
 
-      <div class="connection-card">
+      </header>
 
-        <div class="connection-header">
+
+      <main class="setup-container">
+
+        <div class="setup-intro">
 
           <span class="eyebrow">
             SUA EXPERIÊNCIA COMEÇA AQUI
           </span>
 
           <h1>
-            Adicione sua playlist
+            Seu conteúdo.
+            <br>
+            <span>Do seu jeito.</span>
           </h1>
 
           <p>
-            Conecte sua playlist e tenha seus canais
-            organizados em uma experiência premium.
+            Conecte sua playlist e transforme
+            seu navegador em uma central de
+            entretenimento premium.
           </p>
 
         </div>
 
 
-        <!-- MÉTODOS -->
+        <!-- ABAS -->
 
         <div class="source-tabs">
 
           <button
             class="source-tab active"
             data-source="url"
+            type="button"
           >
-            <span>↗</span>
             URL M3U
           </button>
 
           <button
             class="source-tab"
             data-source="file"
+            type="button"
           >
-            <span>□</span>
             Arquivo M3U
           </button>
 
           <button
             class="source-tab"
             data-source="xtream"
+            type="button"
           >
-            <span>⌁</span>
             Xtream Codes
           </button>
 
         </div>
 
 
-        <!-- URL -->
+        <!-- =========================
+             URL M3U
+        ========================== -->
 
-        <div
+        <form
+          id="urlForm"
           class="source-panel active"
-          data-source-panel="url"
         >
 
           <div class="field">
 
-            <label for="playlistName">
+            <label for="urlName">
               Nome da playlist
             </label>
 
             <input
-              id="playlistName"
+              id="urlName"
               type="text"
               placeholder="Ex.: Minha TV"
               autocomplete="off"
@@ -118,47 +137,54 @@
 
           </div>
 
+
           <div class="field">
 
-            <label for="playlistUrl">
+            <label for="m3uUrl">
               URL da playlist M3U
             </label>
 
             <input
-              id="playlistUrl"
+              id="m3uUrl"
               type="url"
-              placeholder="https://exemplo.com/playlist.m3u"
+              placeholder="https://servidor.com/playlist.m3u"
               autocomplete="off"
             >
 
           </div>
 
+
           <button
-            id="loadURLPlaylist"
-            class="load-button"
+            class="primary-button"
+            type="submit"
           >
-            <span>Carregar playlist</span>
-            <span>→</span>
+            <span>
+              Carregar playlist
+            </span>
+
+            <b>→</b>
           </button>
 
-        </div>
+        </form>
 
 
-        <!-- ARQUIVO -->
+        <!-- =========================
+             ARQUIVO M3U
+        ========================== -->
 
-        <div
+        <form
+          id="fileForm"
           class="source-panel"
-          data-source-panel="file"
         >
 
           <div class="field">
 
-            <label for="filePlaylistName">
+            <label for="fileName">
               Nome da playlist
             </label>
 
             <input
-              id="filePlaylistName"
+              id="fileName"
               type="text"
               placeholder="Ex.: Minha TV"
               autocomplete="off"
@@ -166,58 +192,66 @@
 
           </div>
 
+
           <label
             class="file-drop"
-            for="playlistFile"
+            for="m3uFile"
           >
 
-            <div class="file-icon">
+            <input
+              id="m3uFile"
+              type="file"
+              accept=".m3u,.m3u8"
+            >
+
+            <span class="upload-icon">
               ↑
-            </div>
+            </span>
 
             <strong>
               Selecione seu arquivo M3U
             </strong>
 
-            <span id="selectedFileName">
+            <small id="fileLabel">
               M3U ou M3U8
-            </span>
-
-            <input
-              id="playlistFile"
-              type="file"
-              accept=".m3u,.m3u8,audio/x-mpegurl,application/x-mpegURL"
-              hidden
-            >
+            </small>
 
           </label>
 
+
           <button
-            id="loadFilePlaylist"
-            class="load-button"
+            class="primary-button"
+            type="submit"
           >
-            <span>Carregar playlist</span>
-            <span>→</span>
+
+            <span>
+              Abrir playlist
+            </span>
+
+            <b>→</b>
+
           </button>
 
-        </div>
+        </form>
 
 
-        <!-- XTREAM -->
+        <!-- =========================
+             XTREAM CODES
+        ========================== -->
 
-        <div
+        <form
+          id="xtreamForm"
           class="source-panel"
-          data-source-panel="xtream"
         >
 
           <div class="field">
 
-            <label for="xtreamName">
+            <label for="xtName">
               Nome da playlist
             </label>
 
             <input
-              id="xtreamName"
+              id="xtName"
               type="text"
               placeholder="Ex.: Minha TV"
               autocomplete="off"
@@ -225,31 +259,32 @@
 
           </div>
 
+
           <div class="field">
 
-            <label for="xtreamServer">
+            <label for="xtServer">
               Servidor
             </label>
 
             <input
-              id="xtreamServer"
+              id="xtServer"
               type="url"
               placeholder="https://servidor.com:8080"
-              autocomplete="off"
             >
 
           </div>
 
-          <div class="form-row">
+
+          <div class="field-row">
 
             <div class="field">
 
-              <label for="xtreamUsername">
+              <label for="xtUser">
                 Usuário
               </label>
 
               <input
-                id="xtreamUsername"
+                id="xtUser"
                 type="text"
                 placeholder="Usuário"
                 autocomplete="off"
@@ -257,14 +292,15 @@
 
             </div>
 
+
             <div class="field">
 
-              <label for="xtreamPassword">
+              <label for="xtPass">
                 Senha
               </label>
 
               <input
-                id="xtreamPassword"
+                id="xtPass"
                 type="password"
                 placeholder="Senha"
                 autocomplete="off"
@@ -274,450 +310,340 @@
 
           </div>
 
+
           <button
-            id="loadXtreamPlaylist"
-            class="load-button"
+            class="primary-button"
+            type="submit"
           >
-            <span>Conectar e carregar</span>
-            <span>→</span>
+
+            <span>
+              Conectar e carregar
+            </span>
+
+            <b>→</b>
+
           </button>
 
-        </div>
+        </form>
 
 
-        <div class="connection-footer">
+        <div
+          id="setupStatus"
+          class="setup-status"
+        ></div>
+
+
+        <div class="privacy">
+
           <span>🔒</span>
-          Seus dados ficam armazenados localmente neste navegador.
+
+          <p>
+            Suas configurações ficam armazenadas
+            localmente neste navegador.
+          </p>
+
         </div>
 
-      </div>
+      </main>
 
-    </div>
-
-  </section>
+    </section>
 
 
-  <!-- =====================================================
-       SISTEMA
-       ===================================================== -->
+    <!-- =========================
+         HOME
+    ========================== -->
 
-  <div
-    id="appShell"
-    class="app-shell hidden"
-  >
+    <section
+      id="homeView"
+      class="home-view hidden"
+    >
 
-    <!-- SIDEBAR -->
-
-    <aside class="sidebar">
-
-      <div class="brand">
-
-        <div class="brand-mark">
-          S
-        </div>
-
-        <div class="brand-text">
-          <strong>SINAL</strong>
-          <span>IPTV</span>
-        </div>
-
-      </div>
-
-
-      <nav class="navigation">
-
-        <button
-          class="nav-item active"
-          data-view="home"
-        >
-          <span>⌂</span>
-          <label>Início</label>
-        </button>
-
-        <button
-          class="nav-item"
-          data-view="channels"
-        >
-          <span>▣</span>
-          <label>Canais</label>
-        </button>
-
-        <button
-          class="nav-item"
-          data-view="favorites"
-        >
-          <span>♡</span>
-          <label>Favoritos</label>
-        </button>
-
-        <button
-          class="nav-item"
-          data-view="playlists"
-        >
-          <span>☷</span>
-          <label>Playlists</label>
-        </button>
-
-      </nav>
-
-
-      <div class="sidebar-bottom">
-
-        <button
-          class="nav-item"
-          id="changePlaylist"
-        >
-          <span>⇄</span>
-          <label>Trocar playlist</label>
-        </button>
-
-      </div>
-
-    </aside>
-
-
-    <!-- MAIN -->
-
-    <main class="main">
+      <!-- HEADER -->
 
       <header class="topbar">
 
         <button
-          id="mobileMenuBtn"
-          class="mobile-menu"
+          id="mobileMenu"
+          class="icon-button mobile-menu"
+          type="button"
+          aria-label="Menu"
         >
           ☰
         </button>
 
-        <div class="topbar-title">
-          <span id="pageTitle">
-            Início
+
+        <div class="brand">
+
+          <span class="brand-symbol">
+            S
           </span>
+
+          <span class="brand-name">
+            SINAL <strong>IPTV</strong>
+          </span>
+
         </div>
 
-        <div class="topbar-actions">
+
+        <div class="top-actions">
+
+          <label class="search-box">
+
+            <span>
+              ⌕
+            </span>
+
+            <input
+              id="searchInput"
+              type="search"
+              placeholder="Buscar..."
+              autocomplete="off"
+            >
+
+          </label>
+
 
           <button
-            id="searchToggle"
+            id="favoritesBtn"
             class="icon-button"
-            title="Pesquisar"
+            type="button"
+            title="Favoritos"
           >
-            ⌕
+            ☆
           </button>
 
-          <div class="profile-button">
-            <span class="profile-avatar">
-              S
-            </span>
-            <span id="currentPlaylistName">
-              Minha playlist
-            </span>
-          </div>
+
+          <button
+            id="changePlaylist"
+            class="profile-button"
+            type="button"
+            title="Trocar playlist"
+          >
+            S
+          </button>
 
         </div>
 
       </header>
 
 
-      <div
-        id="searchWrapper"
-        class="search-wrapper hidden"
-      >
+      <div class="app-layout">
 
-        <input
-          id="searchInput"
-          type="search"
-          placeholder="Pesquisar canais..."
-          autocomplete="off"
+        <!-- SIDEBAR -->
+
+        <aside
+          id="sidebar"
+          class="sidebar"
         >
+
+          <div class="sidebar-title">
+            BIBLIOTECA
+          </div>
+
+          <nav id="categoryNav"></nav>
+
+        </aside>
+
+
+        <!-- CONTEÚDO -->
+
+        <main class="content">
+
+          <!-- HERO -->
+
+          <section class="hero">
+
+            <div class="hero-background"></div>
+
+            <div class="hero-gradient"></div>
+
+
+            <div class="hero-content">
+
+              <span class="eyebrow">
+                SINAL IPTV
+              </span>
+
+              <h2 id="heroTitle">
+                Sua programação.
+              </h2>
+
+              <p id="heroText">
+                Tudo organizado em uma experiência
+                rápida, elegante e premium.
+              </p>
+
+
+              <button
+                id="heroPlay"
+                class="hero-button"
+                type="button"
+              >
+                ▶
+                Assistir agora
+              </button>
+
+            </div>
+
+          </section>
+
+
+          <!-- BIBLIOTECA -->
+
+          <section class="content-section">
+
+            <div class="section-heading">
+
+              <div>
+
+                <span class="eyebrow">
+                  BIBLIOTECA
+                </span>
+
+                <h3 id="sectionTitle">
+                  Destaques
+                </h3>
+
+              </div>
+
+
+              <span
+                id="resultCount"
+                class="result-count"
+              ></span>
+
+            </div>
+
+
+            <div
+              id="mediaGrid"
+              class="media-grid"
+            ></div>
+
+
+            <div
+              id="emptyState"
+              class="empty-state hidden"
+            >
+
+              <div class="empty-icon">
+                ⌕
+              </div>
+
+              <h3>
+                Nada encontrado
+              </h3>
+
+              <p>
+                Tente outra busca ou categoria.
+              </p>
+
+            </div>
+
+
+            <button
+              id="loadMore"
+              class="load-more hidden"
+              type="button"
+            >
+              Carregar mais
+            </button>
+
+          </section>
+
+        </main>
 
       </div>
 
+    </section>
 
-      <!-- INÍCIO -->
 
-      <section
-        id="homeView"
-        class="view active"
-      >
+    <!-- =========================
+         PLAYER
+    ========================== -->
 
-        <div class="hero">
+    <div
+      id="playerModal"
+      class="modal hidden"
+    >
 
-          <div class="hero-content">
+      <div class="player-shell">
 
-            <div class="hero-badge">
-              <span></span>
-              PLAYLIST CONECTADA
+        <button
+          id="closePlayer"
+          class="close-player"
+          type="button"
+          aria-label="Fechar"
+        >
+          ×
+        </button>
+
+
+        <div class="video-wrap">
+
+          <video
+            id="videoPlayer"
+            controls
+            playsinline
+            preload="metadata"
+          ></video>
+
+
+          <div
+            id="videoFallback"
+            class="video-fallback hidden"
+          >
+
+            <div class="fallback-icon">
+              ▶
             </div>
 
-            <h1>
-              Seu entretenimento.
-              <strong>Do seu jeito.</strong>
-            </h1>
+            <h3>
+              Reprodução não disponível
+            </h3>
 
             <p>
-              Todos os seus canais organizados em uma
-              experiência simples, rápida e premium.
-            </p>
-
-            <div class="hero-actions">
-
-              <button
-                id="goChannels"
-                class="primary-button"
-              >
-                Assistir canais
-              </button>
-
-              <button
-                id="goPlaylists"
-                class="secondary-button"
-              >
-                Minhas playlists
-              </button>
-
-            </div>
-
-          </div>
-
-          <div class="hero-glow"></div>
-
-        </div>
-
-
-        <div class="section-header">
-
-          <div>
-            <h2>
-              Sua playlist
-            </h2>
-
-            <p>
-              Conteúdo conectado ao Sinal IPTV.
-            </p>
-          </div>
-
-        </div>
-
-        <div
-          id="homeStats"
-          class="stats-grid"
-        ></div>
-
-      </section>
-
-
-      <!-- CANAIS -->
-
-      <section
-        id="channelsView"
-        class="view"
-      >
-
-        <div class="page-heading">
-
-          <div>
-
-            <span class="eyebrow">
-              SUA PLAYLIST
-            </span>
-
-            <h1>
-              Canais
-            </h1>
-
-            <p id="channelCounter">
-              Nenhum canal carregado.
+              Este navegador não consegue
+              reproduzir diretamente este formato
+              de stream.
             </p>
 
           </div>
 
         </div>
 
-        <div
-          id="categoryBar"
-          class="category-bar"
-        ></div>
 
-        <div
-          id="channelGrid"
-          class="channel-grid"
-        ></div>
+        <div class="player-info">
 
-        <div
-          id="channelsEmpty"
-          class="empty-state hidden"
-        >
+          <span class="eyebrow">
+            REPRODUZINDO
+          </span>
 
-          <div class="empty-icon">
-            ▣
-          </div>
-
-          <h3>
-            Nenhum canal encontrado
-          </h3>
-
-          <p>
-            Verifique sua playlist ou tente outra pesquisa.
-          </p>
-
-        </div>
-
-      </section>
-
-
-      <!-- FAVORITOS -->
-
-      <section
-        id="favoritesView"
-        class="view"
-      >
-
-        <div class="page-heading">
-
-          <div>
-
-            <span class="eyebrow">
-              SINAL IPTV
-            </span>
-
-            <h1>
-              Favoritos
-            </h1>
-
-            <p>
-              Seus canais favoritos.
-            </p>
-
-          </div>
-
-        </div>
-
-        <div
-          id="favoriteGrid"
-          class="channel-grid"
-        ></div>
-
-        <div
-          id="favoritesEmpty"
-          class="empty-state"
-        >
-
-          <div class="empty-icon">
-            ♡
-          </div>
-
-          <h3>
-            Nenhum favorito
-          </h3>
-
-          <p>
-            Adicione canais aos favoritos para
-            encontrá-los rapidamente.
-          </p>
-
-        </div>
-
-      </section>
-
-
-      <!-- PLAYLISTS -->
-
-      <section
-        id="playlistsView"
-        class="view"
-      >
-
-        <div class="page-heading">
-
-          <div>
-
-            <span class="eyebrow">
-              SINAL IPTV
-            </span>
-
-            <h1>
-              Playlists
-            </h1>
-
-            <p>
-              Gerencie suas conexões.
-            </p>
-
-          </div>
+          <h2 id="playerTitle">
+            —
+          </h2>
 
           <button
-            id="addAnotherPlaylist"
-            class="primary-button"
+            id="playerFavorite"
+            class="secondary-button"
+            type="button"
           >
-            ＋ Adicionar
+            ☆ Favoritar
           </button>
 
         </div>
 
-        <div
-          id="playlistGrid"
-          class="playlist-grid"
-        ></div>
-
-      </section>
-
-    </main>
-
-  </div>
-
-
-  <!-- =====================================================
-       PLAYER
-       ===================================================== -->
-
-  <div
-    id="playerModal"
-    class="player-modal-overlay hidden"
-  >
-
-    <div class="player-modal">
-
-      <button
-        id="closePlayer"
-        class="modal-close"
-      >
-        ×
-      </button>
-
-      <div class="player-header">
-
-        <div>
-          <span class="eyebrow">
-            AO VIVO
-          </span>
-
-          <h2 id="playerTitle">
-            Canal
-          </h2>
-        </div>
-
-      </div>
-
-      <div class="video-container">
-
-        <video
-          id="videoPlayer"
-          controls
-          playsinline
-          autoplay
-        ></video>
-
-      </div>
-
-      <div
-        id="playerStatus"
-        class="player-status"
-      >
-        Conectando...
       </div>
 
     </div>
+
+
+    <!-- TOAST -->
+
+    <div
+      id="toast"
+      class="toast"
+    ></div>
 
   </div>
 
@@ -725,4 +651,5 @@
   <script src="app.js"></script>
 
 </body>
+
 </html>
