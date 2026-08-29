@@ -1,41 +1,78 @@
+"use strict";
+
 /* =========================================================
-   SINAL IPTV — APP.JS
+   SINAL IPTV
+   FLUXO:
+   CONEXÃO -> VALIDAR -> CARREGAR -> PAINEL
    ========================================================= */
 
 (() => {
-  "use strict";
 
-  /* =========================================================
-     CONFIGURAÇÃO
-     ========================================================= */
-
-  const STORAGE_KEYS = {
-    playlists: "sinal_iptv_playlists",
-    favorites: "sinal_iptv_favorites"
+  const STORAGE = {
+    PLAYLISTS: "sinal_iptv_playlists_v3",
+    ACTIVE: "sinal_iptv_active_playlist_v3",
+    FAVORITES: "sinal_iptv_favorites_v3"
   };
 
-  let playlists = loadJSON(STORAGE_KEYS.playlists, []);
-  let favorites = loadJSON(STORAGE_KEYS.favorites, []);
+  let playlists = read(STORAGE.PLAYLISTS, []);
+  let activePlaylistId = read(STORAGE.ACTIVE, null);
+  let favorites = read(STORAGE.FAVORITES, []);
 
   let channels = [];
-  let activeCategory = "Todos";
-  let currentPlaylistId = null;
+  let currentCategory = "Todos";
   let currentView = "home";
 
 
-  /* =========================================================
-     HELPERS
-     ========================================================= */
+  /* =====================================================
+     UTILITÁRIOS
+     ===================================================== */
 
   function $(selector) {
     return document.querySelector(selector);
   }
 
-  function $all(selector) {
+  function $$(selector) {
     return [...document.querySelectorAll(selector)];
   }
 
+  function read(key, fallback) {
+
+    try {
+
+      const value =
+        localStorage.getItem(key);
+
+      return value
+        ? JSON.parse(value)
+        : fallback;
+
+    } catch {
+
+      return fallback;
+
+    }
+  }
+
+  function write(key, value) {
+
+    localStorage.setItem(
+      key,
+      JSON.stringify(value)
+    );
+  }
+
+  function id() {
+
+    return (
+      Date.now().toString(36) +
+      Math.random()
+        .toString(36)
+        .slice(2)
+    );
+  }
+
   function escapeHTML(value) {
+
     return String(value ?? "")
       .replace(/&/g, "&amp;")
       .replace(/</g, "&lt;")
@@ -44,670 +81,450 @@
       .replace(/'/g, "&#039;");
   }
 
-  function loadJSON(key, fallback) {
-    try {
-      const value = localStorage.getItem(key);
-      return value ? JSON.parse(value) : fallback;
-    } catch {
-      return fallback;
-    }
-  }
+  function toast(message, type = "info") {
 
-  function saveJSON(key, value) {
-    localStorage.setItem(key, JSON.stringify(value));
-  }
+    const container =
+      $("#toastContainer");
 
-  function generateId() {
-    return (
-      Date.now().toString(36) +
-      Math.random().toString(36).substring(2, 10)
+    const element =
+      document.createElement("div");
+
+    element.className =
+      `toast toast-${type}`;
+
+    element.textContent =
+      message;
+
+    container.appendChild(
+      element
     );
-  }
-
-  function getInitials(name) {
-    return String(name || "S")
-      .trim()
-      .split(/\s+/)
-      .slice(0, 2)
-      .map(word => word[0])
-      .join("")
-      .toUpperCase();
-  }
-
-  function getChannelKey(channel) {
-    return (
-      channel.id ||
-      `${channel.name}-${channel.url}`
-    );
-  }
-
-  function isFavorite(channel) {
-    return favorites.includes(getChannelKey(channel));
-  }
-
-
-  /* =========================================================
-     TOAST
-     ========================================================= */
-
-  function showToast(message, type = "info") {
-    let container = $("#toastContainer");
-
-    if (!container) {
-      container = document.createElement("div");
-      container.id = "toastContainer";
-      container.className = "toast-container";
-      document.body.appendChild(container);
-    }
-
-    const toast = document.createElement("div");
-
-    toast.className = `toast toast-${type}`;
-    toast.innerHTML = `
-      <span>${escapeHTML(message)}</span>
-    `;
-
-    container.appendChild(toast);
 
     setTimeout(() => {
-      toast.classList.add("toast-hide");
 
-      setTimeout(() => toast.remove(), 300);
+      element.classList.add(
+        "toast-hide"
+      );
+
+      setTimeout(
+        () => element.remove(),
+        300
+      );
+
     }, 3500);
   }
 
 
-  /* =========================================================
-     MODAL
-     ========================================================= */
+  /* =====================================================
+     TELA DE CONEXÃO
+     ===================================================== */
 
-  function openPlaylistModal() {
-    const modal = $("#playlistModal");
+  function showConnectionScreen() {
 
-    if (!modal) return;
+    $("#connectionScreen")
+      ?.classList.remove("hidden");
 
-    modal.classList.remove("hidden");
-
-    document.body.classList.add("modal-open");
-
-    resetPlaylistForm();
+    $("#appShell")
+      ?.classList.add("hidden");
   }
 
-  function closePlaylistModal() {
-    const modal = $("#playlistModal");
+  function showApp() {
 
-    if (!modal) return;
+    $("#connectionScreen")
+      ?.classList.add("hidden");
 
-    modal.classList.add("hidden");
-
-    document.body.classList.remove("modal-open");
+    $("#appShell")
+      ?.classList.remove("hidden");
   }
 
 
-  function resetPlaylistForm() {
-    const name = $("#playlistName");
-    const url = $("#playlistUrl");
-    const file = $("#playlistFile");
+  /* =====================================================
+     ABAS
+     ===================================================== */
 
-    if (name) name.value = "";
-    if (url) url.value = "";
-    if (file) file.value = "";
+  function setupTabs() {
 
-    const xtreamServer = $("#xtreamServer");
-    const xtreamUsername = $("#xtreamUsername");
-    const xtreamPassword = $("#xtreamPassword");
+    $$(".source-tab")
+      .forEach(tab => {
 
-    if (xtreamServer) xtreamServer.value = "";
-    if (xtreamUsername) xtreamUsername.value = "";
-    if (xtreamPassword) xtreamPassword.value = "";
+        tab.addEventListener(
+          "click",
+          () => {
 
-    switchSource("url");
-  }
+            const source =
+              tab.dataset.source;
 
+            $$(".source-tab")
+              .forEach(item =>
+                item.classList.toggle(
+                  "active",
+                  item === tab
+                )
+              );
 
-  /* =========================================================
-     SOURCE TABS
-     ========================================================= */
+            $$(".source-panel")
+              .forEach(panel => {
 
-  function switchSource(source) {
-    $all(".source-tab").forEach(tab => {
-      tab.classList.toggle(
-        "active",
-        tab.dataset.source === source
-      );
-    });
+                panel.classList.toggle(
+                  "active",
+                  panel.dataset.sourcePanel === source
+                );
 
-    $all(".source-panel").forEach(panel => {
-      panel.classList.toggle(
-        "active",
-        panel.dataset.sourcePanel === source
-      );
-    });
-  }
+              });
 
-
-  /* =========================================================
-     PLAYLIST STORAGE
-     ========================================================= */
-
-  function addPlaylist(playlist) {
-    playlists.push(playlist);
-
-    saveJSON(
-      STORAGE_KEYS.playlists,
-      playlists
-    );
-
-    currentPlaylistId = playlist.id;
-
-    loadPlaylistChannels(playlist);
-
-    renderEverything();
-
-    showToast(
-      "Playlist adicionada com sucesso!",
-      "success"
-    );
-
-    closePlaylistModal();
-  }
-
-
-  function removePlaylist(id) {
-    const playlist = playlists.find(
-      item => item.id === id
-    );
-
-    if (!playlist) return;
-
-    const confirmed = confirm(
-      `Remover a playlist "${playlist.name}"?`
-    );
-
-    if (!confirmed) return;
-
-    playlists = playlists.filter(
-      item => item.id !== id
-    );
-
-    saveJSON(
-      STORAGE_KEYS.playlists,
-      playlists
-    );
-
-    if (currentPlaylistId === id) {
-      currentPlaylistId =
-        playlists.length > 0
-          ? playlists[0].id
-          : null;
-
-      channels = [];
-
-      if (currentPlaylistId) {
-        const nextPlaylist = playlists.find(
-          item => item.id === currentPlaylistId
+          }
         );
 
-        loadPlaylistChannels(nextPlaylist);
-      }
-    }
-
-    renderEverything();
-
-    showToast(
-      "Playlist removida.",
-      "success"
-    );
+      });
   }
 
 
-  function selectPlaylist(id) {
-    const playlist = playlists.find(
-      item => item.id === id
-    );
+  /* =====================================================
+     M3U
+     ===================================================== */
 
-    if (!playlist) return;
+  function parseM3U(text) {
 
-    currentPlaylistId = id;
-
-    loadPlaylistChannels(playlist);
-
-    renderEverything();
-
-    showToast(
-      `${playlist.name} selecionada.`,
-      "success"
-    );
-  }
-
-
-  /* =========================================================
-     M3U PARSER
-     ========================================================= */
-
-  function parseM3U(content) {
-    const lines = content
-      .replace(/\r/g, "")
-      .split("\n")
-      .map(line => line.trim())
-      .filter(Boolean);
+    const lines =
+      text
+        .replace(/\r/g, "")
+        .split("\n")
+        .map(line => line.trim());
 
     const result = [];
 
-    for (let i = 0; i < lines.length; i++) {
+    for (
+      let i = 0;
+      i < lines.length;
+      i++
+    ) {
 
-      const line = lines[i];
+      const line =
+        lines[i];
 
-      if (!line.startsWith("#EXTINF")) {
+      if (
+        !line ||
+        !line.startsWith("#EXTINF")
+      ) {
         continue;
       }
 
-      const info = line;
+      const metadata =
+        parseEXTINF(line);
 
-      let url = "";
+      let streamUrl = "";
 
       for (
         let j = i + 1;
         j < lines.length;
         j++
       ) {
+
+        const candidate =
+          lines[j];
+
         if (
-          lines[j] &&
-          !lines[j].startsWith("#")
+          !candidate ||
+          candidate.startsWith("#")
         ) {
-          url = lines[j];
-          break;
+          continue;
         }
+
+        streamUrl =
+          candidate;
+
+        i = j;
+
+        break;
       }
 
-      if (!url) continue;
+      if (!streamUrl) {
+        continue;
+      }
 
-      const namePart = info.includes(",")
-        ? info.substring(
-            info.indexOf(",") + 1
-          ).trim()
-        : "Canal";
+      result.push({
 
-      const name = namePart || "Canal";
+        id:
+          id(),
 
-      const tvgId =
-        getAttribute(info, "tvg-id");
-
-      const tvgName =
-        getAttribute(info, "tvg-name");
-
-      const logo =
-        getAttribute(info, "tvg-logo");
-
-      const group =
-        getAttribute(info, "group-title") ||
-        "Outros";
-
-      const channel = {
-        id: generateId(),
         name:
-          tvgName ||
-          name,
+          metadata.name ||
+          "Canal",
 
-        url,
+        url:
+          streamUrl,
 
-        logo: logo || "",
+        logo:
+          metadata.logo,
 
         category:
-          group || "Outros",
+          metadata.group ||
+          "Outros",
 
         tvgId:
-          tvgId || "",
+          metadata.tvgId,
 
-        raw:
-          info
-      };
+        tvgName:
+          metadata.tvgName
 
-      result.push(channel);
+      });
+
     }
 
     return result;
   }
 
 
-  function getAttribute(line, attribute) {
-    const regex = new RegExp(
-      `${attribute}="([^"]*)"`,
-      "i"
-    );
+  function parseEXTINF(line) {
 
-    const match = line.match(regex);
+    const comma =
+      line.indexOf(",");
 
-    return match
-      ? match[1]
-      : "";
+    let attributes =
+      comma >= 0
+        ? line.slice(0, comma)
+        : line;
+
+    let name =
+      comma >= 0
+        ? line.slice(comma + 1).trim()
+        : "Canal";
+
+    function attr(key) {
+
+      const regex =
+        new RegExp(
+          `${key}\\s*=\\s*["']([^"']*)["']`,
+          "i"
+        );
+
+      const match =
+        attributes.match(regex);
+
+      return match
+        ? match[1]
+        : "";
+    }
+
+    return {
+
+      name,
+
+      tvgId:
+        attr("tvg-id"),
+
+      tvgName:
+        attr("tvg-name"),
+
+      logo:
+        attr("tvg-logo"),
+
+      group:
+        attr("group-title")
+
+    };
   }
 
 
-  /* =========================================================
-     LOAD PLAYLIST
-     ========================================================= */
+  /* =====================================================
+     URL M3U
+     ===================================================== */
 
-  async function loadPlaylistChannels(playlist) {
-    if (!playlist) {
-      channels = [];
-      return;
-    }
+  async function loadURLPlaylist() {
 
-    currentPlaylistId = playlist.id;
-
-    if (
-      Array.isArray(playlist.channels) &&
-      playlist.channels.length
-    ) {
-      channels = playlist.channels;
-
-      renderEverything();
-
-      return;
-    }
-
-    if (playlist.type === "file") {
-      channels = [];
-
-      renderEverything();
-
-      return;
-    }
-
-    if (playlist.type === "m3u-url") {
-
-      showToast(
-        "Carregando playlist...",
-        "info"
-      );
-
-      try {
-        const response = await fetch(
-          playlist.url
-        );
-
-        if (!response.ok) {
-          throw new Error(
-            `HTTP ${response.status}`
-          );
-        }
-
-        const text =
-          await response.text();
-
-        channels = parseM3U(text);
-
-        playlist.channels = channels;
-
-        saveJSON(
-          STORAGE_KEYS.playlists,
-          playlists
-        );
-
-        renderEverything();
-
-        showToast(
-          `${channels.length} canais carregados.`,
-          "success"
-        );
-
-      } catch (error) {
-
-        console.error(error);
-
-        channels = [];
-
-        renderEverything();
-
-        showToast(
-          "Não foi possível carregar a URL. O servidor pode bloquear CORS.",
-          "error"
-        );
-      }
-
-      return;
-    }
-
-    if (playlist.type === "xtream") {
-
-      await loadXtreamPlaylist(
-        playlist
-      );
-    }
-  }
-
-
-  /* =========================================================
-     XTREAM CODES
-     ========================================================= */
-
-  async function loadXtreamPlaylist(playlist) {
-
-    showToast(
-      "Conectando ao servidor...",
-      "info"
-    );
-
-    let server =
-      String(playlist.server || "")
-        .trim();
-
-    server =
-      server.replace(/\/+$/, "");
-
-    const username =
-      encodeURIComponent(
-        playlist.username || ""
-      );
-
-    const password =
-      encodeURIComponent(
-        playlist.password || ""
-      );
+    const name =
+      $("#playlistName")
+        ?.value.trim();
 
     const url =
-      `${server}/player_api.php` +
-      `?username=${username}` +
-      `&password=${password}`;
+      $("#playlistUrl")
+        ?.value.trim();
+
+    if (!name) {
+
+      toast(
+        "Digite o nome da playlist.",
+        "error"
+      );
+
+      return;
+    }
+
+    if (!url) {
+
+      toast(
+        "Digite a URL da playlist.",
+        "error"
+      );
+
+      return;
+    }
+
+    try {
+      new URL(url);
+    } catch {
+
+      toast(
+        "A URL informada não é válida.",
+        "error"
+      );
+
+      return;
+    }
+
+    setLoading(
+      "#loadURLPlaylist",
+      true,
+      "Carregando..."
+    );
 
     try {
 
       const response =
-        await fetch(url);
+        await fetch(
+          url,
+          {
+            method: "GET",
+            cache: "no-store"
+          }
+        );
 
       if (!response.ok) {
+
         throw new Error(
-          `HTTP ${response.status}`
+          `Servidor respondeu ${response.status}`
         );
       }
 
-      const data =
-        await response.json();
+      const text =
+        await response.text();
 
       if (
-        !data ||
-        !data.user_info
+        !text.includes("#EXTINF") &&
+        !text.includes("#EXTM3U")
       ) {
+
         throw new Error(
-          "Credenciais inválidas."
+          "A URL não parece ser uma playlist M3U."
         );
       }
 
-      const streams =
-        data.available_channels ||
-        data.live_streams ||
-        [];
+      const parsed =
+        parseM3U(text);
 
-      /*
-       * Alguns servidores retornam os dados
-       * diretamente pela API. Outros exigem
-       * chamadas específicas para live streams.
-       */
+      if (!parsed.length) {
 
-      let liveStreams = streams;
-
-      if (
-        !Array.isArray(liveStreams) ||
-        liveStreams.length === 0
-      ) {
-
-        const liveUrl =
-          `${server}/player_api.php` +
-          `?username=${username}` +
-          `&password=${password}` +
-          `&action=get_live_streams`;
-
-        const liveResponse =
-          await fetch(liveUrl);
-
-        if (!liveResponse.ok) {
-          throw new Error(
-            `HTTP ${liveResponse.status}`
-          );
-        }
-
-        liveStreams =
-          await liveResponse.json();
+        throw new Error(
+          "A playlist não contém canais reconhecíveis."
+        );
       }
 
-      if (!Array.isArray(liveStreams)) {
-        liveStreams = [];
-      }
+      const playlist = {
 
-      channels =
-        liveStreams.map(stream => {
+        id:
+          id(),
 
-          const streamId =
-            stream.stream_id;
+        name,
 
-          const extension =
-            stream.container_extension ||
-            "ts";
+        type:
+          "m3u-url",
 
-          const streamUrl =
-            `${server}/live/` +
-            `${playlist.username}/` +
-            `${playlist.password}/` +
-            `${streamId}.${extension}`;
+        url,
 
-          return {
-            id:
-              String(
-                streamId ||
-                generateId()
-              ),
+        channels:
+          parsed,
 
-            name:
-              stream.name ||
-              "Canal",
+        createdAt:
+          Date.now()
 
-            url:
-              streamUrl,
+      };
 
-            logo:
-              stream.stream_icon ||
-              "",
-
-            category:
-              stream.category_name ||
-              "TV",
-
-            tvgId:
-              stream.epg_channel_id ||
-              ""
-          };
-        });
-
-      playlist.channels =
-        channels;
-
-      saveJSON(
-        STORAGE_KEYS.playlists,
-        playlists
+      savePlaylist(
+        playlist
       );
 
-      renderEverything();
-
-      showToast(
-        `${channels.length} canais carregados.`,
+      toast(
+        `${parsed.length} canais carregados.`,
         "success"
+      );
+
+      enterPlaylist(
+        playlist
       );
 
     } catch (error) {
 
-      console.error(
-        "Erro Xtream:",
-        error
-      );
+      console.error(error);
 
-      channels = [];
-
-      renderEverything();
-
-      showToast(
-        "Não foi possível conectar ao servidor Xtream. Verifique os dados e o CORS.",
+      toast(
+        "Não foi possível carregar a playlist. Verifique a URL e se o servidor permite acesso pelo navegador (CORS).",
         "error"
       );
+
+    } finally {
+
+      setLoading(
+        "#loadURLPlaylist",
+        false,
+        "Carregar playlist"
+      );
+
     }
   }
 
 
-  /* =========================================================
-     FILE M3U
-     ========================================================= */
+  /* =====================================================
+     ARQUIVO
+     ===================================================== */
 
-  async function handleM3UFile(file) {
+  async function loadFilePlaylist() {
 
-    if (!file) return;
+    const file =
+      $("#playlistFile")
+        ?.files?.[0];
 
-    const isM3U =
-      /\.(m3u|m3u8)$/i.test(
-        file.name
-      ) ||
-      file.type === "audio/x-mpegurl" ||
-      file.type === "application/x-mpegURL";
+    if (!file) {
 
-    if (!isM3U) {
-
-      showToast(
-        "Selecione um arquivo M3U ou M3U8.",
+      toast(
+        "Selecione um arquivo M3U.",
         "error"
       );
 
       return;
     }
 
+    const name =
+      $("#filePlaylistName")
+        ?.value.trim() ||
+      file.name.replace(
+        /\.(m3u8?|txt)$/i,
+        ""
+      );
+
+    setLoading(
+      "#loadFilePlaylist",
+      true,
+      "Lendo arquivo..."
+    );
+
     try {
 
-      const content =
+      const text =
         await file.text();
 
       const parsed =
-        parseM3U(content);
+        parseM3U(text);
 
       if (!parsed.length) {
 
-        showToast(
-          "Nenhum canal foi encontrado nesse arquivo.",
-          "error"
+        throw new Error(
+          "Nenhum canal encontrado."
         );
-
-        return;
       }
-
-      const name =
-        $("#playlistName")?.value.trim() ||
-        file.name
-          .replace(
-            /\.(m3u|m3u8)$/i,
-            ""
-          );
 
       const playlist = {
 
         id:
-          generateId(),
+          id(),
 
         name,
 
@@ -721,11 +538,20 @@
           parsed,
 
         createdAt:
-          new Date().toISOString()
+          Date.now()
 
       };
 
-      addPlaylist(
+      savePlaylist(
+        playlist
+      );
+
+      toast(
+        `${parsed.length} canais carregados.`,
+        "success"
+      );
+
+      enterPlaylist(
         playlist
       );
 
@@ -733,405 +559,403 @@
 
       console.error(error);
 
-      showToast(
-        "Erro ao ler o arquivo M3U.",
+      toast(
+        "Não foi possível ler esse arquivo M3U.",
         "error"
       );
+
+    } finally {
+
+      setLoading(
+        "#loadFilePlaylist",
+        false,
+        "Carregar playlist"
+      );
+
     }
   }
 
 
-  /* =========================================================
-     ADD URL PLAYLIST
-     ========================================================= */
+  /* =====================================================
+     XTREAM
+     ===================================================== */
 
-  function handleURLPlaylist() {
-
-    const name =
-      $("#playlistName")?.value.trim();
-
-    const url =
-      $("#playlistUrl")?.value.trim();
-
-    if (!name) {
-
-      showToast(
-        "Digite um nome para a playlist.",
-        "error"
-      );
-
-      return;
-    }
-
-    if (!url) {
-
-      showToast(
-        "Digite a URL da playlist.",
-        "error"
-      );
-
-      return;
-    }
-
-    try {
-      new URL(url);
-    } catch {
-
-      showToast(
-        "Digite uma URL válida.",
-        "error"
-      );
-
-      return;
-    }
-
-    const playlist = {
-
-      id:
-        generateId(),
-
-      name,
-
-      type:
-        "m3u-url",
-
-      url,
-
-      channels:
-        [],
-
-      createdAt:
-        new Date().toISOString()
-
-    };
-
-    addPlaylist(
-      playlist
-    );
-  }
-
-
-  /* =========================================================
-     ADD XTREAM
-     ========================================================= */
-
-  function handleXtreamPlaylist() {
+  async function loadXtreamPlaylist() {
 
     const name =
-      $("#playlistName")?.value.trim();
+      $("#xtreamName")
+        ?.value.trim();
 
     const server =
-      $("#xtreamServer")?.value.trim();
+      $("#xtreamServer")
+        ?.value.trim()
+        .replace(/\/+$/, "");
 
     const username =
-      $("#xtreamUsername")?.value.trim();
+      $("#xtreamUsername")
+        ?.value.trim();
 
     const password =
-      $("#xtreamPassword")?.value.trim();
-
-    if (!name) {
-
-      showToast(
-        "Digite um nome para a playlist.",
-        "error"
-      );
-
-      return;
-    }
+      $("#xtreamPassword")
+        ?.value.trim();
 
     if (
+      !name ||
       !server ||
       !username ||
       !password
     ) {
 
-      showToast(
-        "Preencha servidor, usuário e senha.",
+      toast(
+        "Preencha todos os campos do Xtream Codes.",
         "error"
       );
 
       return;
     }
 
-    const playlist = {
-
-      id:
-        generateId(),
-
-      name,
-
-      type:
-        "xtream",
-
-      server:
-        server.replace(/\/+$/, ""),
-
-      username,
-
-      password,
-
-      channels:
-        [],
-
-      createdAt:
-        new Date().toISOString()
-
-    };
-
-    addPlaylist(
-      playlist
+    setLoading(
+      "#loadXtreamPlaylist",
+      true,
+      "Conectando..."
     );
-  }
 
+    try {
 
-  /* =========================================================
-     FAVORITES
-     ========================================================= */
+      const apiUrl =
+        `${server}/player_api.php` +
+        `?username=${encodeURIComponent(username)}` +
+        `&password=${encodeURIComponent(password)}` +
+        `&action=get_live_streams`;
 
-  function toggleFavorite(channel) {
-
-    const key =
-      getChannelKey(channel);
-
-    if (
-      favorites.includes(key)
-    ) {
-
-      favorites =
-        favorites.filter(
-          id => id !== key
+      const response =
+        await fetch(
+          apiUrl,
+          {
+            cache: "no-store"
+          }
         );
 
-      showToast(
-        "Removido dos favoritos.",
-        "info"
-      );
+      if (!response.ok) {
 
-    } else {
-
-      favorites.push(key);
-
-      showToast(
-        "Adicionado aos favoritos.",
-        "success"
-      );
-    }
-
-    saveJSON(
-      STORAGE_KEYS.favorites,
-      favorites
-    );
-
-    renderChannels();
-    renderFavorites();
-  }
-
-
-  /* =========================================================
-     PLAYER
-     ========================================================= */
-
-  function openPlayer(channel) {
-
-    if (!channel?.url) {
-
-      showToast(
-        "Este canal não possui uma URL de transmissão.",
-        "error"
-      );
-
-      return;
-    }
-
-    let modal =
-      $("#playerModal");
-
-    if (!modal) {
-
-      modal =
-        document.createElement("div");
-
-      modal.id =
-        "playerModal";
-
-      modal.className =
-        "modal-overlay";
-
-      modal.innerHTML = `
-
-        <div class="player-modal">
-
-          <button
-            class="modal-close"
-            id="closePlayerModal"
-          >
-            ×
-          </button>
-
-          <div class="player-title">
-            <span id="playerChannelName">
-              Canal
-            </span>
-          </div>
-
-          <div class="video-container">
-
-            <video
-              id="videoPlayer"
-              controls
-              autoplay
-              playsinline
-              preload="metadata"
-            ></video>
-
-          </div>
-
-          <div
-            class="player-status"
-            id="playerStatus"
-          >
-            Conectando...
-          </div>
-
-        </div>
-      `;
-
-      document.body.appendChild(
-        modal
-      );
-
-      $("#closePlayerModal")
-        ?.addEventListener(
-          "click",
-          closePlayer
+        throw new Error(
+          `Servidor respondeu ${response.status}`
         );
+      }
 
-    } else {
+      const data =
+        await response.json();
 
-      modal.classList.remove(
-        "hidden"
-      );
-    }
+      if (!Array.isArray(data)) {
 
-    modal.classList.remove(
-      "hidden"
-    );
+        throw new Error(
+          "Resposta inválida do servidor Xtream."
+        );
+      }
 
-    document.body.classList.add(
-      "modal-open"
-    );
+      const parsed =
+        data.map(item => {
 
-    const title =
-      $("#playerChannelName");
+          const streamId =
+            item.stream_id;
 
-    const video =
-      $("#videoPlayer");
+          const extension =
+            item.container_extension ||
+            "ts";
 
-    const status =
-      $("#playerStatus");
+          const streamUrl =
+            `${server}/live/` +
+            `${encodeURIComponent(username)}/` +
+            `${encodeURIComponent(password)}/` +
+            `${streamId}.${extension}`;
 
-    if (title) {
-      title.textContent =
-        channel.name;
-    }
+          return {
 
-    if (status) {
-      status.textContent =
-        "Conectando...";
-    }
+            id:
+              String(
+                streamId ||
+                id()
+              ),
 
-    if (video) {
+            name:
+              item.name ||
+              "Canal",
 
-      video.pause();
+            url:
+              streamUrl,
 
-      video.removeAttribute(
-        "src"
-      );
+            logo:
+              item.stream_icon ||
+              "",
 
-      video.load();
+            category:
+              item.category_name ||
+              "TV",
 
-      video.src =
-        channel.url;
+            tvgId:
+              item.epg_channel_id ||
+              ""
 
-      video.play()
-        .then(() => {
-
-          if (status) {
-            status.textContent =
-              "Reproduzindo";
-          }
-
-        })
-        .catch(() => {
-
-          if (status) {
-            status.textContent =
-              "O navegador não conseguiu iniciar esta transmissão.";
-          }
+          };
 
         });
+
+      if (!parsed.length) {
+
+        throw new Error(
+          "Nenhum canal foi retornado pelo servidor."
+        );
+      }
+
+      const playlist = {
+
+        id:
+          id(),
+
+        name,
+
+        type:
+          "xtream",
+
+        server,
+
+        username,
+
+        password,
+
+        channels:
+          parsed,
+
+        createdAt:
+          Date.now()
+
+      };
+
+      savePlaylist(
+        playlist
+      );
+
+      toast(
+        `${parsed.length} canais carregados.`,
+        "success"
+      );
+
+      enterPlaylist(
+        playlist
+      );
+
+    } catch (error) {
+
+      console.error(error);
+
+      toast(
+        "Não foi possível conectar ao Xtream. Confira servidor, usuário, senha e CORS.",
+        "error"
+      );
+
+    } finally {
+
+      setLoading(
+        "#loadXtreamPlaylist",
+        false,
+        "Conectar e carregar"
+      );
+
     }
   }
 
 
-  function closePlayer() {
+  /* =====================================================
+     PLAYLIST STORAGE
+     ===================================================== */
 
-    const modal =
-      $("#playerModal");
+  function savePlaylist(
+    playlist
+  ) {
 
-    const video =
-      $("#videoPlayer");
-
-    if (video) {
-
-      video.pause();
-
-      video.removeAttribute(
-        "src"
+    const existing =
+      playlists.findIndex(
+        item =>
+          item.id ===
+          playlist.id
       );
 
-      video.load();
-    }
+    if (existing >= 0) {
 
-    if (modal) {
-      modal.classList.add(
-        "hidden"
+      playlists[existing] =
+        playlist;
+
+    } else {
+
+      playlists.push(
+        playlist
       );
+
     }
 
-    document.body.classList.remove(
-      "modal-open"
+    write(
+      STORAGE.PLAYLISTS,
+      playlists
+    );
+
+    activePlaylistId =
+      playlist.id;
+
+    write(
+      STORAGE.ACTIVE,
+      activePlaylistId
     );
   }
 
 
-  /* =========================================================
-     NAVIGATION
-     ========================================================= */
+  function enterPlaylist(
+    playlist
+  ) {
 
-  function switchView(view) {
+    activePlaylistId =
+      playlist.id;
 
-    currentView = view;
+    write(
+      STORAGE.ACTIVE,
+      activePlaylistId
+    );
 
-    $all(".view").forEach(section => {
+    channels =
+      Array.isArray(
+        playlist.channels
+      )
+        ? playlist.channels
+        : [];
 
-      section.classList.toggle(
-        "active",
-        section.id === `${view}View`
+    $("#currentPlaylistName")
+      .textContent =
+      playlist.name;
+
+    showApp();
+
+    renderAll();
+
+    navigate(
+      "home"
+    );
+  }
+
+
+  /* =====================================================
+     RECUPERAR PLAYLIST
+     ===================================================== */
+
+  function restoreSession() {
+
+    if (!activePlaylistId) {
+
+      showConnectionScreen();
+
+      return;
+    }
+
+    const playlist =
+      playlists.find(
+        item =>
+          item.id ===
+          activePlaylistId
       );
 
-    });
+    if (!playlist) {
 
-    $all(".nav-item").forEach(item => {
+      showConnectionScreen();
 
-      item.classList.toggle(
-        "active",
-        item.dataset.view === view
-      );
+      return;
+    }
 
-    });
+    if (
+      !Array.isArray(
+        playlist.channels
+      ) ||
+      !playlist.channels.length
+    ) {
+
+      showConnectionScreen();
+
+      return;
+    }
+
+    channels =
+      playlist.channels;
+
+    $("#currentPlaylistName")
+      .textContent =
+      playlist.name;
+
+    showApp();
+
+    renderAll();
+
+    navigate(
+      "home"
+    );
+  }
+
+
+  /* =====================================================
+     LOADING
+     ===================================================== */
+
+  function setLoading(
+    selector,
+    loading,
+    label
+  ) {
+
+    const button =
+      $(selector);
+
+    if (!button) return;
+
+    button.disabled =
+      loading;
+
+    button.innerHTML =
+      loading
+        ? `<span>${label}</span><span>...</span>`
+        : `<span>${label}</span><span>→</span>`;
+  }
+
+
+  /* =====================================================
+     NAVEGAÇÃO
+     ===================================================== */
+
+  function navigate(
+    view
+  ) {
+
+    currentView =
+      view;
+
+    $$(".view")
+      .forEach(section => {
+
+        section.classList.toggle(
+          "active",
+          section.id ===
+          `${view}View`
+        );
+
+      });
+
+    $$(".nav-item[data-view]")
+      .forEach(button => {
+
+        button.classList.toggle(
+          "active",
+          button.dataset.view === view
+        );
+
+      });
 
     const titles = {
+
       home:
         "Início",
 
@@ -1143,72 +967,83 @@
 
       playlists:
         "Playlists"
+
     };
 
-    const pageTitle =
-      $("#pageTitle");
+    $("#pageTitle")
+      .textContent =
+      titles[view] ||
+      "Sinal IPTV";
 
-    if (pageTitle) {
-      pageTitle.textContent =
-        titles[view] ||
-        "Sinal IPTV";
+    if (view === "channels") {
+      renderChannels();
+    }
+
+    if (view === "favorites") {
+      renderFavorites();
+    }
+
+    if (view === "playlists") {
+      renderPlaylists();
     }
 
     window.scrollTo({
       top: 0,
       behavior: "smooth"
     });
-
-    renderEverything();
   }
 
 
-  /* =========================================================
-     CATEGORIES
-     ========================================================= */
+  /* =====================================================
+     CATEGORIAS
+     ===================================================== */
 
-  function getCategories() {
+  function categories() {
 
-    const categories =
+    const list =
       channels
-        .map(channel =>
-          channel.category ||
-          "Outros"
+        .map(
+          channel =>
+            channel.category ||
+            "Outros"
         )
         .filter(Boolean);
 
     return [
       "Todos",
-      ...new Set(categories)
+      ...new Set(list)
     ];
   }
 
 
   function renderCategories() {
 
-    const bar =
+    const container =
       $("#categoryBar");
 
-    if (!bar) return;
+    if (!container) return;
 
-    const categories =
-      getCategories();
+    const list =
+      categories();
 
     if (
-      !categories.includes(
-        activeCategory
+      !list.includes(
+        currentCategory
       )
     ) {
-      activeCategory = "Todos";
+
+      currentCategory =
+        "Todos";
+
     }
 
-    bar.innerHTML =
-      categories
-        .map(category => `
+    container.innerHTML =
+      list.map(
+        category => `
 
           <button
             class="category-button ${
-              category === activeCategory
+              category === currentCategory
                 ? "active"
                 : ""
             }"
@@ -1217,75 +1052,138 @@
             ${escapeHTML(category)}
           </button>
 
-        `)
-        .join("");
+        `
+      ).join("");
 
-    $all(
-      ".category-button"
-    ).forEach(button => {
+    $$(".category-button")
+      .forEach(button => {
 
-      button.addEventListener(
-        "click",
-        () => {
+        button.addEventListener(
+          "click",
+          () => {
 
-          activeCategory =
-            button.dataset.category;
+            currentCategory =
+              button.dataset.category;
 
-          renderChannels();
-          renderCategories();
+            renderCategories();
+            renderChannels();
 
-        }
-      );
-    });
+          }
+        );
+
+      });
   }
 
 
-  /* =========================================================
-     SEARCH
-     ========================================================= */
+  /* =====================================================
+     BUSCA
+     ===================================================== */
 
-  function getFilteredChannels() {
+  function filteredChannels() {
 
     const search =
       $("#searchInput")
         ?.value
         .trim()
-        .toLowerCase() || "";
+        .toLowerCase() ||
+      "";
 
     return channels.filter(
       channel => {
 
-        const matchesCategory =
-          activeCategory === "Todos" ||
-          (
-            channel.category ||
-            "Outros"
-          ) === activeCategory;
+        const category =
+          channel.category ||
+          "Outros";
 
-        const matchesSearch =
+        const categoryOK =
+          currentCategory === "Todos" ||
+          category === currentCategory;
+
+        const searchOK =
           !search ||
           String(
-            channel.name || ""
+            channel.name
           )
             .toLowerCase()
             .includes(search);
 
         return (
-          matchesCategory &&
-          matchesSearch
+          categoryOK &&
+          searchOK
         );
+
       }
     );
   }
 
 
-  /* =========================================================
-     CHANNEL CARD
-     ========================================================= */
+  /* =====================================================
+     FAVORITOS
+     ===================================================== */
 
-  function channelCard(channel) {
+  function channelKey(
+    channel
+  ) {
 
-    const favorite =
+    return (
+      channel.id ||
+      `${channel.name}|${channel.url}`
+    );
+
+  }
+
+  function favorite(
+    channel
+  ) {
+
+    const key =
+      channelKey(channel);
+
+    if (
+      favorites.includes(key)
+    ) {
+
+      favorites =
+        favorites.filter(
+          item =>
+            item !== key
+        );
+
+    } else {
+
+      favorites.push(key);
+
+    }
+
+    write(
+      STORAGE.FAVORITES,
+      favorites
+    );
+
+    renderChannels();
+    renderFavorites();
+  }
+
+  function isFavorite(
+    channel
+  ) {
+
+    return favorites.includes(
+      channelKey(channel)
+    );
+
+  }
+
+
+  /* =====================================================
+     CARD DE CANAL
+     ===================================================== */
+
+  function channelCard(
+    channel
+  ) {
+
+    const fav =
       isFavorite(channel);
 
     const logo =
@@ -1295,8 +1193,8 @@
 
       <article
         class="channel-card"
-        data-channel-id="${escapeHTML(
-          getChannelKey(channel)
+        data-channel="${escapeHTML(
+          channelKey(channel)
         )}"
       >
 
@@ -1314,25 +1212,31 @@
           ${
             logo
               ? ""
-              : `<span>${escapeHTML(
-                  getInitials(
-                    channel.name
-                  )
-                )}</span>`
+              : `<span>
+                  ${escapeHTML(
+                    String(
+                      channel.name ||
+                      "TV"
+                    )
+                      .slice(0,2)
+                      .toUpperCase()
+                  )}
+                </span>`
           }
 
           <button
             class="favorite-button ${
-              favorite ? "is-favorite" : ""
+              fav
+                ? "is-favorite"
+                : ""
             }"
             data-action="favorite"
-            title="${
-              favorite
-                ? "Remover favorito"
-                : "Adicionar favorito"
-            }"
           >
-            ${favorite ? "♥" : "♡"}
+            ${
+              fav
+                ? "♥"
+                : "♡"
+            }
           </button>
 
         </div>
@@ -1367,9 +1271,9 @@
   }
 
 
-  /* =========================================================
-     RENDER CHANNELS
-     ========================================================= */
+  /* =====================================================
+     RENDER CANAIS
+     ===================================================== */
 
   function renderChannels() {
 
@@ -1379,49 +1283,41 @@
     const empty =
       $("#channelsEmpty");
 
-    const counter =
-      $("#channelCounter");
-
     if (!grid) return;
 
-    const filtered =
-      getFilteredChannels();
+    const list =
+      filteredChannels();
 
     grid.innerHTML =
-      filtered
+      list
         .map(channelCard)
         .join("");
 
-    if (counter) {
-
-      counter.textContent =
-        channels.length
-          ? `${channels.length} canais disponíveis`
-          : "Nenhum canal carregado.";
-    }
-
-    if (empty) {
-
-      empty.classList.toggle(
-        "hidden",
-        channels.length > 0
-      );
-    }
-
     grid.classList.toggle(
       "hidden",
-      filtered.length === 0
+      list.length === 0
     );
 
-    bindChannelActions(
-      grid
+    empty.classList.toggle(
+      "hidden",
+      list.length > 0
     );
+
+    $("#channelCounter")
+      .textContent =
+      `${channels.length} ${
+        channels.length === 1
+          ? "canal"
+          : "canais"
+      } disponíveis`;
+
+    bindChannelEvents();
   }
 
 
-  /* =========================================================
-     FAVORITES RENDER
-     ========================================================= */
+  /* =====================================================
+     FAVORITOS
+     ===================================================== */
 
   function renderFavorites() {
 
@@ -1433,88 +1329,69 @@
 
     if (!grid) return;
 
-    const favoriteChannels =
+    const list =
       channels.filter(
-        channel =>
-          isFavorite(channel)
+        isFavorite
       );
 
     grid.innerHTML =
-      favoriteChannels
+      list
         .map(channelCard)
         .join("");
 
-    if (empty) {
-
-      empty.classList.toggle(
-        "hidden",
-        favoriteChannels.length > 0
-      );
-    }
-
     grid.classList.toggle(
       "hidden",
-      favoriteChannels.length === 0
+      list.length === 0
     );
 
-    bindChannelActions(
-      grid
+    empty.classList.toggle(
+      "hidden",
+      list.length > 0
     );
+
+    bindChannelEvents();
   }
 
 
-  /* =========================================================
-     CHANNEL ACTIONS
-     ========================================================= */
+  /* =====================================================
+     EVENTOS DOS CANAIS
+     ===================================================== */
 
-  function bindChannelActions(
-    container
-  ) {
+  function bindChannelEvents() {
 
-    if (!container) return;
-
-    container
-      .querySelectorAll(
-        ".channel-card"
-      )
+    $$(".channel-card")
       .forEach(card => {
-
-        const key =
-          card.dataset.channelId;
-
-        const channel =
-          channels.find(
-            item =>
-              getChannelKey(item) === key
-          );
-
-        if (!channel) return;
 
         card.addEventListener(
           "click",
           event => {
 
             const action =
-              event.target.closest(
-                "[data-action]"
-              )?.dataset.action;
+              event.target
+                .closest(
+                  "[data-action]"
+                )
+                ?.dataset.action;
 
-            if (action === "favorite") {
+            const key =
+              card.dataset.channel;
 
-              event.stopPropagation();
-
-              toggleFavorite(
-                channel
+            const channel =
+              channels.find(
+                item =>
+                  channelKey(item) === key
               );
 
-              return;
-            }
+            if (!channel) return;
 
-            if (action === "play") {
+            if (
+              action ===
+              "favorite"
+            ) {
 
               event.stopPropagation();
 
-              openPlayer(
+              favorite(
                 channel
               );
 
@@ -1524,19 +1401,25 @@
             openPlayer(
               channel
             );
+
           }
         );
+
       });
   }
 
 
-  /* =========================================================
-     PLAYLIST CARD
-     ========================================================= */
+  /* =====================================================
+     PLAYLISTS
+     ===================================================== */
 
   function playlistCard(
     playlist
   ) {
+
+    const active =
+      playlist.id ===
+      activePlaylistId;
 
     const count =
       Array.isArray(
@@ -1545,42 +1428,13 @@
         ? playlist.channels.length
         : 0;
 
-    let typeLabel =
-      "Playlist";
-
-    if (
-      playlist.type ===
-      "m3u-url"
-    ) {
-      typeLabel =
-        "M3U • URL";
-    }
-
-    if (
-      playlist.type ===
-      "file"
-    ) {
-      typeLabel =
-        "M3U • Arquivo";
-    }
-
-    if (
-      playlist.type ===
-      "xtream"
-    ) {
-      typeLabel =
-        "Xtream Codes";
-    }
-
-    const active =
-      playlist.id ===
-      currentPlaylistId;
-
     return `
 
       <article
         class="playlist-card ${
-          active ? "selected" : ""
+          active
+            ? "selected"
+            : ""
         }"
       >
 
@@ -1591,9 +1445,13 @@
           </div>
 
           <span>
-            ${escapeHTML(
-              typeLabel
-            )}
+            ${
+              playlist.type === "xtream"
+                ? "XTREAM"
+                : playlist.type === "file"
+                  ? "M3U • ARQUIVO"
+                  : "M3U • URL"
+            }
           </span>
 
         </div>
@@ -1607,10 +1465,10 @@
           </h3>
 
           <p>
-            ${
-              count
-                ? `${count} canais`
-                : "Ainda não carregada"
+            ${count} ${
+              count === 1
+                ? "canal"
+                : "canais"
             }
           </p>
 
@@ -1619,24 +1477,23 @@
         <div class="playlist-actions">
 
           <button
-            class="secondary-button playlist-select"
-            data-id="${escapeHTML(
+            class="secondary-button"
+            data-playlist-select="${escapeHTML(
               playlist.id
             )}"
           >
             ${
               active
-                ? "Selecionada"
+                ? "Ativa"
                 : "Selecionar"
             }
           </button>
 
           <button
-            class="danger-button playlist-delete"
-            data-id="${escapeHTML(
+            class="danger-button"
+            data-playlist-delete="${escapeHTML(
               playlist.id
             )}"
-            title="Excluir playlist"
           >
             ×
           </button>
@@ -1649,324 +1506,332 @@
   }
 
 
-  /* =========================================================
-     RENDER PLAYLISTS
-     ========================================================= */
-
   function renderPlaylists() {
 
     const grid =
       $("#playlistGrid");
 
-    const homeGrid =
-      $("#homePlaylists");
+    if (!grid) return;
 
-    const empty =
-      $("#playlistsEmpty");
+    grid.innerHTML =
+      playlists
+        .map(
+          playlistCard
+        )
+        .join("");
 
-    const homeEmpty =
-      $("#homeEmpty");
+    grid
+      .querySelectorAll(
+        "[data-playlist-select]"
+      )
+      .forEach(button => {
 
-    if (grid) {
+        button.addEventListener(
+          "click",
+          () => {
 
-      grid.innerHTML =
-        playlists
-          .map(playlistCard)
-          .join("");
+            const playlist =
+              playlists.find(
+                item =>
+                  item.id ===
+                  button.dataset.playlistSelect
+              );
 
-      grid.classList.toggle(
-        "hidden",
-        playlists.length === 0
-      );
-    }
+            if (!playlist) return;
 
-    if (homeGrid) {
+            activePlaylistId =
+              playlist.id;
 
-      homeGrid.innerHTML =
-        playlists
-          .slice(0, 4)
-          .map(playlistCard)
-          .join("");
-    }
+            channels =
+              playlist.channels ||
+              [];
 
-    if (empty) {
+            write(
+              STORAGE.ACTIVE,
+              activePlaylistId
+            );
 
-      empty.classList.toggle(
-        "hidden",
-        playlists.length > 0
-      );
-    }
+            $("#currentPlaylistName")
+              .textContent =
+              playlist.name;
 
-    if (homeEmpty) {
+            renderAll();
 
-      homeEmpty.classList.toggle(
-        "hidden",
-        playlists.length > 0
-      );
-    }
+            navigate(
+              "home"
+            );
 
-    bindPlaylistActions(
-      grid
-    );
+          }
+        );
 
-    bindPlaylistActions(
-      homeGrid
-    );
+      });
+
+    grid
+      .querySelectorAll(
+        "[data-playlist-delete]"
+      )
+      .forEach(button => {
+
+        button.addEventListener(
+          "click",
+          () => {
+
+            deletePlaylist(
+              button.dataset.playlistDelete
+            );
+
+          }
+        );
+
+      });
   }
 
 
-  function bindPlaylistActions(
-    container
+  function deletePlaylist(
+    playlistId
   ) {
 
-    if (!container) return;
+    const playlist =
+      playlists.find(
+        item =>
+          item.id ===
+          playlistId
+      );
 
-    container
-      .querySelectorAll(
-        ".playlist-select"
-      )
-      .forEach(button => {
+    if (!playlist) return;
 
-        button.addEventListener(
-          "click",
-          event => {
+    const confirmed =
+      confirm(
+        `Deseja remover "${playlist.name}"?`
+      );
 
-            event.stopPropagation();
+    if (!confirmed) return;
 
-            selectPlaylist(
-              button.dataset.id
-            );
-          }
-        );
-      });
+    playlists =
+      playlists.filter(
+        item =>
+          item.id !==
+          playlistId
+      );
 
-    container
-      .querySelectorAll(
-        ".playlist-delete"
-      )
-      .forEach(button => {
-
-        button.addEventListener(
-          "click",
-          event => {
-
-            event.stopPropagation();
-
-            removePlaylist(
-              button.dataset.id
-            );
-          }
-        );
-      });
-  }
-
-
-  /* =========================================================
-     SEARCH UI
-     ========================================================= */
-
-  function toggleSearch() {
-
-    const wrapper =
-      $("#searchWrapper");
-
-    if (!wrapper) return;
-
-    wrapper.classList.toggle(
-      "hidden"
+    write(
+      STORAGE.PLAYLISTS,
+      playlists
     );
 
     if (
-      !wrapper.classList.contains(
-        "hidden"
-      )
+      activePlaylistId ===
+      playlistId
     ) {
 
-      $("#searchInput")
-        ?.focus();
+      activePlaylistId =
+        null;
+
+      channels = [];
+
+      write(
+        STORAGE.ACTIVE,
+        null
+      );
+
+      showConnectionScreen();
+
     }
-  }
 
+    renderAll();
 
-  /* =========================================================
-     MOBILE MENU
-     ========================================================= */
-
-  function toggleMobileMenu() {
-
-    const sidebar =
-      $(".sidebar");
-
-    if (!sidebar) return;
-
-    sidebar.classList.toggle(
-      "mobile-open"
+    toast(
+      "Playlist removida.",
+      "success"
     );
   }
 
 
-  /* =========================================================
-     EVENT LISTENERS
-     ========================================================= */
+  /* =====================================================
+     HOME
+     ===================================================== */
 
-  function setupEvents() {
+  function renderHome() {
 
-    /* Navegação */
+    const stats =
+      $("#homeStats");
 
-    $all(
-      ".nav-item[data-view]"
-    ).forEach(button => {
+    if (!stats) return;
 
-      button.addEventListener(
-        "click",
-        () => {
-
-          switchView(
-            button.dataset.view
-          );
-
-          $(".sidebar")
-            ?.classList.remove(
-              "mobile-open"
-            );
-        }
-      );
-    });
-
-
-    /* Abrir modal */
-
-    [
-      "#openPlaylistBtn",
-      "#heroAddPlaylist",
-      "#emptyAddPlaylist",
-      "#channelsAddPlaylist",
-      "#channelsEmptyAdd",
-      "#playlistsAdd",
-      "#playlistsEmptyAdd"
-    ].forEach(selector => {
-
-      $(selector)
-        ?.addEventListener(
-          "click",
-          openPlaylistModal
-        );
-    });
-
-
-    $("#homeViewPlaylists")
-      ?.addEventListener(
-        "click",
-        () => switchView(
-          "playlists"
+    const categoriesCount =
+      new Set(
+        channels.map(
+          channel =>
+            channel.category ||
+            "Outros"
         )
-      );
+      ).size;
 
+    stats.innerHTML = `
 
-    $("#heroChannels")
-      ?.addEventListener(
-        "click",
-        () => switchView(
-          "channels"
-        )
-      );
+      <div class="stat-card">
+        <span>CANAIS</span>
+        <strong>
+          ${channels.length}
+        </strong>
+      </div>
 
+      <div class="stat-card">
+        <span>CATEGORIAS</span>
+        <strong>
+          ${categoriesCount}
+        </strong>
+      </div>
 
-    /* Fechar modal */
-
-    $("#closePlaylistModal")
-      ?.addEventListener(
-        "click",
-        closePlaylistModal
-      );
-
-
-    /* Tabs */
-
-    $all(
-      ".source-tab"
-    ).forEach(tab => {
-
-      tab.addEventListener(
-        "click",
-        () => {
-
-          switchSource(
-            tab.dataset.source
-          );
-        }
-      );
-    });
-
-
-    /* URL */
-
-    $("#saveURLPlaylist")
-      ?.addEventListener(
-        "click",
-        handleURLPlaylist
-      );
-
-
-    /* Arquivo */
-
-    $("#saveFilePlaylist")
-      ?.addEventListener(
-        "click",
-        () => {
-
-          const file =
-            $("#playlistFile")
-              ?.files?.[0];
-
-          handleM3UFile(
-            file
-          );
-        }
-      );
-
-
-    /* Xtream */
-
-    $("#saveXtreamPlaylist")
-      ?.addEventListener(
-        "click",
-        handleXtreamPlaylist
-      );
-
-
-    /* File input */
-
-    $("#playlistFile")
-      ?.addEventListener(
-        "change",
-        event => {
-
-          const file =
-            event.target.files?.[0];
-
-          const fileName =
-            $("#selectedFileName");
-
-          if (fileName) {
-
-            fileName.textContent =
-              file
-                ? file.name
-                : "Nenhum arquivo selecionado";
+      <div class="stat-card">
+        <span>FAVORITOS</span>
+        <strong>
+          ${
+            channels.filter(
+              isFavorite
+            ).length
           }
-        }
+        </strong>
+      </div>
+
+    `;
+  }
+
+
+  /* =====================================================
+     RENDER GERAL
+     ===================================================== */
+
+  function renderAll() {
+
+    renderHome();
+
+    renderCategories();
+
+    renderChannels();
+
+    renderFavorites();
+
+    renderPlaylists();
+
+  }
+
+
+  /* =====================================================
+     PLAYER
+     ===================================================== */
+
+  function openPlayer(
+    channel
+  ) {
+
+    const modal =
+      $("#playerModal");
+
+    const video =
+      $("#videoPlayer");
+
+    const title =
+      $("#playerTitle");
+
+    const status =
+      $("#playerStatus");
+
+    if (!channel?.url) {
+
+      toast(
+        "Esse canal não possui uma URL de transmissão.",
+        "error"
       );
 
+      return;
+    }
 
-    /* Busca */
+    modal.classList.remove(
+      "hidden"
+    );
+
+    title.textContent =
+      channel.name;
+
+    status.textContent =
+      "Conectando...";
+
+    video.src =
+      channel.url;
+
+    video.load();
+
+    video.play()
+      .then(() => {
+
+        status.textContent =
+          "Reproduzindo";
+
+      })
+      .catch(() => {
+
+        status.textContent =
+          "A transmissão foi carregada. Pressione play se necessário.";
+
+      });
+
+  }
+
+
+  function closePlayer() {
+
+    const modal =
+      $("#playerModal");
+
+    const video =
+      $("#videoPlayer");
+
+    video.pause();
+
+    video.removeAttribute(
+      "src"
+    );
+
+    video.load();
+
+    modal.classList.add(
+      "hidden"
+    );
+  }
+
+
+  /* =====================================================
+     PESQUISA
+     ===================================================== */
+
+  function setupSearch() {
 
     $("#searchToggle")
       ?.addEventListener(
         "click",
-        toggleSearch
-      );
+        () => {
 
+          const wrapper =
+            $("#searchWrapper");
+
+          wrapper.classList.toggle(
+            "hidden"
+          );
+
+          if (
+            !wrapper.classList.contains(
+              "hidden"
+            )
+          ) {
+
+            $("#searchInput")
+              .focus();
+
+          }
+
+        }
+      );
 
     $("#searchInput")
       ?.addEventListener(
@@ -1977,38 +1842,192 @@
             currentView !==
             "channels"
           ) {
-            switchView(
+
+            navigate(
               "channels"
             );
+
           } else {
+
             renderChannels();
+
           }
+
+        }
+      );
+  }
+
+
+  /* =====================================================
+     EVENTOS PRINCIPAIS
+     ===================================================== */
+
+  function setupEvents() {
+
+    setupTabs();
+
+    setupSearch();
+
+
+    /* Carregar URL */
+
+    $("#loadURLPlaylist")
+      ?.addEventListener(
+        "click",
+        loadURLPlaylist
+      );
+
+
+    /* Carregar arquivo */
+
+    $("#loadFilePlaylist")
+      ?.addEventListener(
+        "click",
+        loadFilePlaylist
+      );
+
+
+    /* Xtream */
+
+    $("#loadXtreamPlaylist")
+      ?.addEventListener(
+        "click",
+        loadXtreamPlaylist
+      );
+
+
+    /* Arquivo escolhido */
+
+    $("#playlistFile")
+      ?.addEventListener(
+        "change",
+        event => {
+
+          const file =
+            event.target.files?.[0];
+
+          $("#selectedFileName")
+            .textContent =
+            file
+              ? file.name
+              : "M3U ou M3U8";
+
         }
       );
 
 
-    /* Menu mobile */
+    /* Navegação */
 
-    $("#mobileMenuBtn")
+    $$(".nav-item[data-view]")
+      .forEach(button => {
+
+        button.addEventListener(
+          "click",
+          () => {
+
+            navigate(
+              button.dataset.view
+            );
+
+          }
+        );
+
+      });
+
+
+    /* Trocar playlist */
+
+    $("#changePlaylist")
       ?.addEventListener(
         "click",
-        toggleMobileMenu
+        () => {
+
+          showConnectionScreen();
+
+        }
       );
 
 
-    /* Fechar modal clicando fora */
+    /* Adicionar outra */
 
-    $("#playlistModal")
+    $("#addAnotherPlaylist")
+      ?.addEventListener(
+        "click",
+        () => {
+
+          showConnectionScreen();
+
+        }
+      );
+
+
+    /* Home */
+
+    $("#goChannels")
+      ?.addEventListener(
+        "click",
+        () => {
+
+          navigate(
+            "channels"
+          );
+
+        }
+      );
+
+
+    $("#goPlaylists")
+      ?.addEventListener(
+        "click",
+        () => {
+
+          navigate(
+            "playlists"
+          );
+
+        }
+      );
+
+
+    /* Player */
+
+    $("#closePlayer")
+      ?.addEventListener(
+        "click",
+        closePlayer
+      );
+
+
+    $("#playerModal")
       ?.addEventListener(
         "click",
         event => {
 
           if (
             event.target.id ===
-            "playlistModal"
+            "playerModal"
           ) {
-            closePlaylistModal();
+
+            closePlayer();
+
           }
+
+        }
+      );
+
+
+    /* Mobile */
+
+    $("#mobileMenuBtn")
+      ?.addEventListener(
+        "click",
+        () => {
+
+          $(".sidebar")
+            ?.classList.toggle(
+              "mobile-open"
+            );
+
         }
       );
 
@@ -2024,129 +2043,28 @@
           "Escape"
         ) {
 
-          closePlaylistModal();
           closePlayer();
+
         }
+
       }
     );
+
   }
 
 
-  /* =========================================================
-     DEMO / PRIMEIRA EXECUÇÃO
-     ========================================================= */
+  /* =====================================================
+     INICIALIZAÇÃO
+     ===================================================== */
 
-  function ensureCurrentPlaylist() {
-
-    if (!playlists.length) {
-
-      currentPlaylistId =
-        null;
-
-      channels = [];
-
-      return;
-    }
-
-    if (
-      !currentPlaylistId ||
-      !playlists.some(
-        playlist =>
-          playlist.id ===
-          currentPlaylistId
-      )
-    ) {
-
-      currentPlaylistId =
-        playlists[0].id;
-    }
-
-    const playlist =
-      playlists.find(
-        item =>
-          item.id ===
-          currentPlaylistId
-      );
-
-    if (
-      playlist &&
-      Array.isArray(
-        playlist.channels
-      )
-    ) {
-
-      channels =
-        playlist.channels;
-    }
-  }
-
-
-  /* =========================================================
-     GLOBAL RENDER
-     ========================================================= */
-
-  function renderEverything() {
-
-    ensureCurrentPlaylist();
-
-    renderPlaylists();
-
-    renderCategories();
-
-    renderChannels();
-
-    renderFavorites();
-  }
-
-
-  /* =========================================================
-     INIT
-     ========================================================= */
-
-  async function init() {
+  function init() {
 
     setupEvents();
 
-    ensureCurrentPlaylist();
+    restoreSession();
 
-    renderEverything();
-
-    if (currentPlaylistId) {
-
-      const playlist =
-        playlists.find(
-          item =>
-            item.id ===
-            currentPlaylistId
-        );
-
-      /*
-       * URLs são recarregadas automaticamente.
-       * Arquivos M3U permanecem armazenados
-       * diretamente no navegador.
-       */
-
-      if (
-        playlist &&
-        (
-          playlist.type ===
-          "m3u-url" ||
-          playlist.type ===
-          "xtream"
-        )
-      ) {
-
-        await loadPlaylistChannels(
-          playlist
-        );
-      }
-    }
   }
 
-
-  /* =========================================================
-     START
-     ========================================================= */
 
   if (
     document.readyState ===
@@ -2161,6 +2079,7 @@
   } else {
 
     init();
+
   }
 
 })();
