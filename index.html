@@ -1,61 +1,189 @@
 <!doctype html>
 <html lang="pt-BR">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="theme-color" content="#07080b">
-<meta name="description" content="Sinal IPTV — sua central premium de entretenimento.">
-<title>Sinal IPTV</title>
-<link rel="stylesheet" href="styles.css">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#07080b">
+  <meta name="description" content="Sinal IPTV — experiência premium de entretenimento.">
+  <title>Sinal IPTV</title>
+
+  <link rel="stylesheet" href="styles.css">
 </head>
+
 <body>
-<header>
-<button class="brand" onclick="showHome()"><span class="mark"><i></i><i></i><i></i></span><span>SINAL<small>IPTV</small></span></button>
 
-<nav>
-<button id="homeNav" class="active" onclick="showHome()">Início</button>
-<button id="liveNav" onclick="showLive()">Ao vivo</button>
-<button id="listNav" onclick="showList()">Minha lista</button>
-<button onclick="showManager()">Playlist</button>
-</nav>
+  <!-- =========================
+       HEADER
+  ========================== -->
 
-<div class="headerRight">
-<div class="search">⌕<input id="searchInput" placeholder="Buscar..." autocomplete="off"></div>
-<button class="profile"><span class="avatar">G</span> Guilherme</button>
-</div>
-</header>
+  <header id="mainHeader" class="mainHeader hidden">
 
-<div id="app"></div>
+    <button class="brand" onclick="showHome()">
 
-<footer>
-<span class="brand footerBrand">
-<span class="mark"><i></i><i></i><i></i></span>
-<span>SINAL<small>IPTV</small></span>
-</span>
-<span>Experiência premium de entretenimento.</span>
-<span>© 2026 Sinal IPTV</span>
-</footer>
+      <span class="mark">
+        <i></i>
+        <i></i>
+        <i></i>
+      </span>
 
-<div class="modal" id="playerModal">
-<div class="modalBox">
-<button class="close" onclick="closePlayer()">×</button>
+      <span>
+        SINAL
+        <small>IPTV</small>
+      </span>
 
-<div class="modalPlayer">
-<video id="modalVideo" controls playsinline></video>
+    </button>
 
-<div id="playerFallback" class="videoPlaceholder hidden">
-<strong>Não foi possível reproduzir esta fonte.</strong>
-<span>Verifique a URL/codec ou tente outro canal.</span>
-</div>
-</div>
+    <nav>
 
-<h2 class="modalTitle" id="modalTitle"></h2>
-<p class="modalDesc" id="modalDesc"></p>
-</div>
-</div>
+      <button id="homeNav" class="active" onclick="showHome()">
+        Início
+      </button>
 
-<div class="toast" id="toast"></div>
+      <button id="liveNav" onclick="showLive()">
+        Ao vivo
+      </button>
 
-<script src="app.js"></script>
+      <button id="moviesNav" onclick="showMovies()">
+        Filmes
+      </button>
+
+      <button id="seriesNav" onclick="showSeries()">
+        Séries
+      </button>
+
+      <button id="listNav" onclick="showList()">
+        Minha lista
+      </button>
+
+    </nav>
+
+    <div class="headerRight">
+
+      <div class="search">
+        <span>⌕</span>
+
+        <input
+          id="searchInput"
+          type="search"
+          placeholder="Buscar..."
+          autocomplete="off"
+        >
+      </div>
+
+      <button
+        class="playlistButton"
+        onclick="showPlaylistManager()"
+      >
+        + Playlist
+      </button>
+
+      <button class="profile">
+        <span class="avatar">S</span>
+      </button>
+
+    </div>
+
+  </header>
+
+
+  <!-- =========================
+       APP
+  ========================== -->
+
+  <div id="app"></div>
+
+
+  <!-- =========================
+       PLAYER MODAL
+  ========================== -->
+
+  <div
+    id="playerModal"
+    class="modal"
+    aria-hidden="true"
+  >
+
+    <div class="modalBox">
+
+      <button
+        class="close"
+        onclick="closePlayer()"
+      >
+        ×
+      </button>
+
+      <div class="modalPlayer">
+
+        <video
+          id="modalVideo"
+          controls
+          playsinline
+          preload="metadata"
+        ></video>
+
+        <div
+          id="playerFallback"
+          class="videoPlaceholder hidden"
+        >
+          <div class="playerIcon">▶</div>
+
+          <strong>
+            Reprodução indisponível
+          </strong>
+
+          <span>
+            O navegador não conseguiu reproduzir
+            essa fonte diretamente.
+          </span>
+        </div>
+
+      </div>
+
+      <div class="playerInformation">
+
+        <div>
+
+          <small id="modalGroup">
+            AO VIVO
+          </small>
+
+          <h2 id="modalTitle">
+            Sinal IPTV
+          </h2>
+
+          <p id="modalDesc"></p>
+
+        </div>
+
+        <button
+          id="modalFavorite"
+          class="playerFavorite"
+        >
+          ＋ Minha lista
+        </button>
+
+      </div>
+
+    </div>
+
+  </div>
+
+
+  <!-- =========================
+       TOAST
+  ========================== -->
+
+  <div
+    id="toast"
+    class="toast"
+  ></div>
+
+
+  <!-- =========================
+       SCRIPT
+  ========================== -->
+
+  <script src="app.js"></script>
+
 </body>
 </html>
