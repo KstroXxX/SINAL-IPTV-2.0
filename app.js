@@ -1,277 +1,1136 @@
-(() => {
-  'use strict';
-
-  const $ = (selector, root = document) => root.querySelector(selector);
-  const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
-  const state = { playlist: [], filter: 'all', group: '', query: '', visible: 120, hls: null };
-  const DB_NAME = 'sinal-iptv-db';
-  const DB_VERSION = 1;
-  const STORE = 'playlists';
-
-  const els = {
-    playlistModal: $('#playlistModal'), playerModal: $('#playerModal'), fileInput: $('#fileInput'), fileName: $('#fileName'),
-    dropzone: $('#dropzone'), grid: $('#grid'), catalog: $('#catalog'), search: $('#search'), groupSelect: $('#groupSelect'),
-    catalogTitle: $('#catalogTitle'), resultStatus: $('#resultStatus'), video: $('#video'), playerTitle: $('#playerTitle'),
-    playerMeta: $('#playerMeta'), playerNotice: $('#playerNotice'), toast: $('#toast'), nav: $('.nav'), loadMore: $('#loadMore')
-  };
-
-  function toast(message) {
-    els.toast.textContent = message;
-    els.toast.classList.add('show');
-    clearTimeout(toast.timer);
-    toast.timer = setTimeout(() => els.toast.classList.remove('show'), 3200);
+const demoChannels = [
+  {
+    name:"Sinal Sports",
+    group:"Esportes",
+    now:"Futebol ao vivo",
+    next:"Debate",
+    logo:"",
+    url:"",
+    art:"a1"
+  },
+  {
+    name:"Sinal News",
+    group:"Notícias",
+    now:"Plantão Brasil",
+    next:"Jornal",
+    logo:"",
+    url:"",
+    art:"a2"
+  },
+  {
+    name:"Sinal Cinema",
+    group:"Filmes",
+    now:"Night Shift",
+    next:"After Hours",
+    logo:"",
+    url:"",
+    art:"a3"
+  },
+  {
+    name:"Sinal Docs",
+    group:"Documentários",
+    now:"Ocean Planet",
+    next:"Wild Earth",
+    logo:"",
+    url:"",
+    art:"a4"
+  },
+  {
+    name:"Sinal Action",
+    group:"Filmes",
+    now:"The North",
+    next:"Black Water",
+    logo:"",
+    url:"",
+    art:"a5"
+  },
+  {
+    name:"Sinal Family",
+    group:"Infantil",
+    now:"Adventure Club",
+    next:"Little Stars",
+    logo:"",
+    url:"",
+    art:"a6"
   }
+];
 
-  function openModal(el) { el.classList.add('show'); el.setAttribute('aria-hidden', 'false'); }
-  function closeModal(el) { el.classList.remove('show'); el.setAttribute('aria-hidden', 'true'); }
+const movies = [
+  "The Last Signal",
+  "Beyond Earth",
+  "Black Water",
+  "After Hours",
+  "The North",
+  "Ocean Planet"
+];
 
-  function esc(value) {
-    return String(value ?? '').replace(/[&<>'"]/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#039;','"':'&quot;'}[ch]));
+let channels = [];
+let favorites = JSON.parse(
+  localStorage.getItem("sinal_favorites") || "[]"
+);
+
+let searchTimer = null;
+
+function load(){
+  try{
+    channels =
+      JSON.parse(
+        localStorage.getItem("sinal_channels") || "null"
+      ) || demoChannels;
+  }catch(e){
+    channels = demoChannels;
   }
+}
 
-  function attr(value) { return esc(value).replace(/`/g, '&#096;'); }
+function save(){
+  localStorage.setItem(
+    "sinal_channels",
+    JSON.stringify(channels)
+  );
+}
 
-  function attrValue(line, key) {
-    const re = new RegExp('(?:^|\\s)' + key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '="([^"]*)"', 'i');
-    const quoted = line.match(re);
-    if (quoted) return quoted[1];
-    const single = new RegExp("(?:^|\\s)" + key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + "='([^']*)'", 'i').exec(line);
-    return single ? single[1] : '';
+function setActive(id){
+  document
+    .querySelectorAll("nav button")
+    .forEach(button => button.classList.remove("active"));
+
+  if(id){
+    document
+      .getElementById(id)
+      ?.classList.add("active");
   }
+}
 
-  function guessType(title, group) {
-    const s = `${group} ${title}`.toLowerCase();
-    if (/(^|[\\s|._-])(filme|filmes|movie|movies|cinema)([\\s|._-]|$)/i.test(s)) return 'Filmes';
-    if (/(s[eé]rie|series|season|temporada|epis[oó]dio|episode|s\d{1,2}e\d{1,2})/i.test(s)) return 'Séries';
-    return 'Canais';
-  }
+function showHome(){
+  setActive("homeNav");
+  app.innerHTML = homeHTML();
+  scrollTo(0,0);
+}
 
-  function cleanTitle(title) {
-    return String(title || 'Sem título').replace(/^\s+|\s+$/g, '') || 'Sem título';
-  }
+function showLive(){
+  setActive("liveNav");
+  app.innerHTML = liveHTML();
+  scrollTo(0,0);
+}
 
-  // Parser tolerante a playlists M3U/M3U8 com atributos comuns de provedores.
-  function parseM3U(text) {
-    const lines = String(text).replace(/^\uFEFF/, '').split(/\r?\n/);
-    const out = [];
-    let meta = null;
+function showList(){
+  setActive("listNav");
+  app.innerHTML = listHTML();
+  scrollTo(0,0);
+}
 
-    for (const raw of lines) {
-      const line = raw.trim();
-      if (!line) continue;
-      if (line.toUpperCase().startsWith('#EXTINF:')) {
-        const comma = line.indexOf(',');
-        const info = comma >= 0 ? line.slice(0, comma) : line;
-        const title = comma >= 0 ? cleanTitle(line.slice(comma + 1)) : 'Sem título';
-        const group = attrValue(info, 'group-title') || attrValue(info, 'group') || '';
-        const logo = attrValue(info, 'tvg-logo') || attrValue(info, 'logo') || '';
-        const channelId = attrValue(info, 'tvg-id') || '';
-        const language = attrValue(info, 'tvg-language') || '';
-        meta = { title, group, logo, channelId, language, type: guessType(title, group) };
-      } else if (!line.startsWith('#') && meta) {
-        const url = line;
-        if (/^(https?|rtmp|rtsp|udp|file):/i.test(url)) out.push({...meta, url});
-        meta = null;
+function showManager(){
+  setActive(null);
+  app.innerHTML = managerHTML();
+  scrollTo(0,0);
+}
+
+function homeHTML(){
+  return `
+  <main>
+
+    <section class="hero">
+
+      <div class="heroCopy">
+
+        <div class="eyebrow">
+          <span class="liveDot"></span>
+          EXPERIÊNCIA PREMIUM
+        </div>
+
+        <h1>
+          O entretenimento<br>
+          <span>do seu jeito.</span>
+        </h1>
+
+        <p>
+          TV ao vivo, filmes, séries e esportes em uma
+          interface criada para parecer premium desde
+          o primeiro toque.
+        </p>
+
+        <div class="actions">
+
+          <button
+            class="primary"
+            onclick="playItem({
+              name:'Night Shift',
+              group:'Filme',
+              url:''
+            })"
+          >
+            ▶ Assistir agora
+          </button>
+
+          <button
+            class="secondary"
+            onclick="toggleFavorite('hero')"
+          >
+            ＋ Minha lista
+          </button>
+
+        </div>
+
+        <div class="chips">
+          <span>4K</span>
+          <span>HDR</span>
+          <span>16+</span>
+          <span>2026</span>
+        </div>
+
+      </div>
+
+      <div class="heroPoster">
+        <div class="posterText">
+          NIGHT<br>
+          <b>SHIFT</b>
+          <small>UMA NOITE. UM SINAL.</small>
+        </div>
+      </div>
+
+    </section>
+
+    <section class="section">
+
+      <div class="sectionHead">
+
+        <div>
+          <small>AGORA</small>
+          <h2>Ao vivo agora</h2>
+        </div>
+
+        <button
+          class="textBtn"
+          onclick="showLive()"
+        >
+          Ver todos →
+        </button>
+
+      </div>
+
+      <div class="channelGrid">
+        ${channels.slice(0,4).map(channelCard).join("")}
+      </div>
+
+    </section>
+
+    <section class="section">
+
+      <div class="sectionHead">
+
+        <div>
+          <small>PARA VOCÊ</small>
+          <h2>Continue assistindo</h2>
+        </div>
+
+      </div>
+
+      <div class="posterGrid">
+        ${movies.map((x,i)=>movieCard(x,i)).join("")}
+      </div>
+
+    </section>
+
+    <section class="section">
+
+      <div class="sectionHead">
+
+        <div>
+          <small>SELEÇÃO SINAL</small>
+          <h2>Porque você vai gostar</h2>
+        </div>
+
+      </div>
+
+      <div class="featureGrid">
+
+        ${[
+          [
+            "After Hours",
+            "ORIGINAL",
+            "Drama • Suspense",
+            "f1"
+          ],
+          [
+            "Beyond Earth",
+            "4K • HDR",
+            "Ficção • Aventura",
+            "f2"
+          ],
+          [
+            "The North",
+            "ESTREIA",
+            "Ação • Drama",
+            "f3"
+          ]
+        ].map(x => `
+
+          <button
+            class="feature ${x[3]}"
+            onclick="playItem({
+              name:'${x[0]}',
+              group:'${x[2]}',
+              url:''
+            })"
+          >
+
+            <span>${x[1]}</span>
+            <b>${x[0]}</b>
+            <small>${x[2]}</small>
+
+          </button>
+
+        `).join("")}
+
+      </div>
+
+    </section>
+
+    <section class="section">
+
+      <div class="sectionHead">
+
+        <div>
+          <small>GRADE</small>
+          <h2>Programação de hoje</h2>
+        </div>
+
+        <button
+          class="textBtn"
+          onclick="showLive()"
+        >
+          Abrir EPG →
+        </button>
+
+      </div>
+
+      ${epgHTML()}
+
+    </section>
+
+  </main>
+  `;
+}
+
+function channelCard(c,i){
+
+  const cls =
+    c.art ||
+    ("a" + ((i || 0) % 6 + 1));
+
+  return `
+    <button
+      class="channel"
+      onclick='playItem(${safeJSON(c)})'
+    >
+
+      <div class="channelArt ${cls}">
+
+        <span>
+          ${c.url ? "● AO VIVO" : "● DEMO"}
+        </span>
+
+        <b>
+          ${esc(c.name).toUpperCase()}
+        </b>
+
+        <small>
+          ${esc(c.now || c.group || "Canal ao vivo")}
+        </small>
+
+      </div>
+
+      <div class="channelInfo">
+
+        <em>
+          ${String(i+1).padStart(2,"0")}
+        </em>
+
+        <div>
+
+          <b>
+            ${esc(c.name)}
+          </b>
+
+          <small>
+            ${esc(c.group || "Outros")}
+            ${
+              c.next
+                ? "• próximo: " + esc(c.next)
+                : ""
+            }
+          </small>
+
+        </div>
+
+        <span>▶</span>
+
+      </div>
+
+    </button>
+  `;
+}
+
+function movieCard(name,i){
+
+  return `
+    <article class="contentCard">
+
+      <button
+        class="cover c${i%6+1}"
+        onclick="playItem({
+          name:${JSON.stringify(name)},
+          group:'Filme',
+          url:''
+        })"
+      >
+
+        <span>
+          ${[78,42,64,31,88,55][i]}%
+        </span>
+
+        <b>
+          ${esc(name).toUpperCase()}
+        </b>
+
+      </button>
+
+      <div class="meta">
+
+        <div>
+
+          <b>
+            ${esc(name)}
+          </b>
+
+          <small>
+            ${i%2 ? "Série" : "Filme"}
+            •
+            ${i%2 ? "T2:E4" : "1h 42min"}
+          </small>
+
+        </div>
+
+        <button
+          class="fav"
+          onclick="
+            event.stopPropagation();
+            toggleFavorite(${JSON.stringify(name)})
+          "
+        >
+          ${favorites.includes(name) ? "✓" : "＋"}
+        </button>
+
+      </div>
+
+    </article>
+  `;
+}
+
+function epgHTML(){
+
+  return `
+    <div class="epg">
+
+      ${channels.slice(0,4).map(c => `
+
+        <div class="epgRow">
+
+          <b>${esc(c.name)}</b>
+
+          <span>18:00</span>
+
+          <span class="epgNow">
+            18:30&nbsp;
+            ${esc(c.now || "Programação")}
+          </span>
+
+          <span>
+            20:00&nbsp;
+            ${esc(c.next || "Próximo programa")}
+          </span>
+
+        </div>
+
+      `).join("")}
+
+    </div>
+  `;
+}
+
+function liveHTML(){
+
+  return `
+    <main class="page">
+
+      <div class="pageHead">
+
+        <small>TELEVISÃO AO VIVO</small>
+
+        <h1>Ao vivo</h1>
+
+        <p>
+          Seus canais organizados em uma experiência
+          simples, rápida e premium.
+        </p>
+
+      </div>
+
+      <div class="pageGrid">
+
+        <div class="videoBox">
+
+          <div class="videoPlaceholder">
+
+            <strong>
+              Selecione um canal
+            </strong>
+
+            <span>
+              O player abrirá a fonte configurada
+              na playlist.
+            </span>
+
+          </div>
+
+        </div>
+
+        <div class="sideList">
+
+          ${channels
+            .map((c,i)=>channelCard(c,i))
+            .join("")}
+
+        </div>
+
+      </div>
+
+      <section
+        class="section"
+        style="padding-left:0;padding-right:0;margin-top:25px"
+      >
+
+        <div class="sectionHead">
+
+          <div>
+
+            <small>PROGRAMAÇÃO</small>
+
+            <h2>EPG</h2>
+
+          </div>
+
+        </div>
+
+        ${epgHTML()}
+
+      </section>
+
+    </main>
+  `;
+}
+
+function listHTML(){
+
+  const items =
+    movies.filter(x => favorites.includes(x));
+
+  return `
+    <main class="page">
+
+      <div class="pageHead">
+
+        <small>PERSONALIZADO</small>
+
+        <h1>Minha lista</h1>
+
+        <p>
+          Conteúdos salvos para assistir depois.
+        </p>
+
+      </div>
+
+      ${
+        items.length
+
+        ? `
+          <div class="posterGrid">
+            ${items.map((x,i)=>movieCard(x,i)).join("")}
+          </div>
+        `
+
+        : `
+          <div
+            class="panel"
+            style="text-align:center;padding:60px;color:#666"
+          >
+            Sua lista ainda está vazia.
+            <br>
+            <small>
+              Use o ＋ nos conteúdos para salvar.
+            </small>
+          </div>
+        `
       }
-    }
-    return out;
+
+    </main>
+  `;
+}
+
+function managerHTML(){
+
+  return `
+    <main class="page admin">
+
+      <div class="pageHead">
+
+        <small>CONFIGURAÇÃO</small>
+
+        <h1>Sua playlist</h1>
+
+        <p>
+          Adicione a playlist que você recebeu do seu
+          provedor. Ela fica armazenada localmente
+          neste navegador.
+        </p>
+
+      </div>
+
+      <div class="panel">
+
+        <div class="drop">
+
+          Selecione um arquivo
+          <b>M3U/M3U8</b>
+          do seu dispositivo.
+
+          <br>
+
+          <label>
+            Selecionar playlist
+
+            <input
+              type="file"
+              accept=".m3u,.m3u8,.txt"
+              onchange="importFile(this.files[0])"
+            >
+
+          </label>
+
+          <p
+            id="fileStatus"
+            class="hint"
+          ></p>
+
+        </div>
+
+        <div
+          style="
+            text-align:center;
+            color:#555;
+            margin:18px 0;
+            font-size:9px
+          "
+        >
+          ou
+        </div>
+
+        <div class="sourceRow">
+
+          <input
+            id="playlistUrl"
+            placeholder="URL da playlist M3U/M3U8"
+          >
+
+          <button onclick="importURL()">
+            Adicionar URL
+          </button>
+
+        </div>
+
+        <p class="hint">
+          Algumas URLs podem ser bloqueadas pelo navegador
+          por CORS. Nesse caso, prefira o arquivo M3U/M3U8
+          ou use um backend/proxy autorizado.
+        </p>
+
+        <div class="playlistInfo">
+
+          <span>
+            <b id="count">${channels.length}</b>
+            canais carregados
+          </span>
+
+          <button
+            class="danger"
+            onclick="clearPlaylist()"
+          >
+            Limpar playlist
+          </button>
+
+        </div>
+
+      </div>
+
+    </main>
+  `;
+}
+
+function importFile(file){
+
+  if(!file){
+    return;
   }
 
-  async function openDB() {
-    if (!('indexedDB' in window)) return null;
-    return new Promise((resolve) => {
-      const req = indexedDB.open(DB_NAME, DB_VERSION);
-      req.onupgradeneeded = () => req.result.createObjectStore(STORE);
-      req.onsuccess = () => resolve(req.result);
-      req.onerror = () => resolve(null);
-    });
-  }
+  const reader = new FileReader();
 
-  async function savePlaylist(items) {
-    try {
-      const db = await openDB();
-      if (db) await new Promise((resolve, reject) => {
-        const tx = db.transaction(STORE, 'readwrite'); tx.objectStore(STORE).put(items, 'current');
-        tx.oncomplete = resolve; tx.onerror = reject;
-      });
-      // Small fallback for browsers where IndexedDB is unavailable.
-      try { localStorage.setItem('sinal_iptv_playlist_fallback', JSON.stringify(items)); } catch (_) {}
-      return true;
-    } catch (_) {
-      try { localStorage.setItem('sinal_iptv_playlist_fallback', JSON.stringify(items)); return true; } catch (_) { return false; }
-    }
-  }
+  reader.onload = () => {
 
-  async function loadPlaylist() {
-    try {
-      const db = await openDB();
-      if (db) {
-        const data = await new Promise((resolve) => {
-          const req = db.transaction(STORE, 'readonly').objectStore(STORE).get('current');
-          req.onsuccess = () => resolve(req.result); req.onerror = () => resolve(null);
-        });
-        if (Array.isArray(data) && data.length) return data;
-      }
-    } catch (_) {}
-    try {
-      const data = JSON.parse(localStorage.getItem('sinal_iptv_playlist_fallback') || '[]');
-      return Array.isArray(data) ? data : [];
-    } catch (_) { return []; }
-  }
+    const parsed = parseM3U(reader.result);
 
-  function stats() {
-    const counts = { Canais: 0, Filmes: 0, 'Séries': 0 };
-    const groups = new Set();
-    state.playlist.forEach(item => { counts[item.type] = (counts[item.type] || 0) + 1; if (item.group) groups.add(item.group); });
-    $('#channelsCount').textContent = counts.Canais.toLocaleString('pt-BR');
-    $('#moviesCount').textContent = counts.Filmes.toLocaleString('pt-BR');
-    $('#seriesCount').textContent = counts['Séries'].toLocaleString('pt-BR');
-    $('#categoriesCount').textContent = groups.size.toLocaleString('pt-BR');
-    $('#playlistStatus').textContent = state.playlist.length ? `${state.playlist.length.toLocaleString('pt-BR')} itens carregados` : 'Nenhuma playlist carregada';
-  }
+    if(!parsed.length){
 
-  function rebuildGroups() {
-    const groups = [...new Set(state.playlist.map(x => x.group).filter(Boolean))].sort((a,b) => a.localeCompare(b, 'pt-BR'));
-    els.groupSelect.innerHTML = '<option value="">Todas as categorias</option>' + groups.map(g => `<option value="${attr(g)}">${esc(g)}</option>`).join('');
-    els.groupSelect.value = state.group;
-  }
+      toast(
+        "Nenhum canal válido encontrado."
+      );
 
-  function showCatalog(filter = state.filter, scroll = true) {
-    if (!state.playlist.length) { openModal(els.playlistModal); return; }
-    state.filter = filter; state.visible = 120;
-    els.catalog.hidden = false;
-    els.catalogTitle.textContent = filter === 'all' ? 'Todo o conteúdo' : filter;
-    $$('.tab').forEach(tab => tab.classList.toggle('active', tab.dataset.filter === filter));
-    renderGrid();
-    if (scroll) els.catalog.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  }
-
-  function filteredItems() {
-    const q = state.query.toLocaleLowerCase('pt-BR');
-    return state.playlist.filter(item => {
-      const typeOk = state.filter === 'all' || item.type === state.filter;
-      const groupOk = !state.group || item.group === state.group;
-      const text = `${item.title} ${item.group} ${item.channelId}`.toLocaleLowerCase('pt-BR');
-      return typeOk && groupOk && (!q || text.includes(q));
-    });
-  }
-
-  function renderGrid() {
-    const items = filteredItems();
-    const shown = items.slice(0, state.visible);
-    els.resultStatus.textContent = `${items.length.toLocaleString('pt-BR')} resultado${items.length === 1 ? '' : 's'}`;
-    els.grid.innerHTML = shown.map((item, index) => {
-      const realIndex = state.playlist.indexOf(item);
-      const image = item.logo ? `<img loading="lazy" src="${attr(item.logo)}" alt="" onerror="this.style.display='none';this.nextElementSibling.style.display='grid'">` : '';
-      return `<article class="item" data-index="${realIndex}" tabindex="0" role="button" aria-label="Abrir ${esc(item.title)}">
-        <div class="thumb">${image}<div class="thumb-fallback" ${item.logo ? 'style="display:none"' : ''}>▶</div></div>
-        <div class="item-body"><div class="item-title" title="${attr(item.title)}">${esc(item.title)}</div><div class="item-meta" title="${attr(item.group || item.type)}">${esc(item.group || item.type)}</div></div>
-      </article>`;
-    }).join('') || '<p class="muted">Nenhum conteúdo encontrado.</p>';
-
-    $$('.item', els.grid).forEach(card => {
-      const action = () => playItem(state.playlist[Number(card.dataset.index)]);
-      card.addEventListener('click', action);
-      card.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); action(); } });
-    });
-    els.loadMore.hidden = items.length <= state.visible;
-  }
-
-  function renderLibrary() {
-    stats();
-    if (!state.playlist.length) {
-      $('#library').innerHTML = `<div class="empty"><div class="empty-icon">✦</div><h2>Sua biblioteca está esperando</h2><p>Carregue um arquivo M3U/M3U8 do seu aparelho. O Sinal IPTV organiza os itens por canais, filmes, séries e categorias.</p><button class="primary" id="addEmpty2">Adicionar playlist</button></div>`;
-      $('#addEmpty2').onclick = () => openModal(els.playlistModal);
       return;
     }
-    $('#library').innerHTML = `<div class="empty"><div class="empty-icon">✓</div><h2>Playlist carregada</h2><p>${state.playlist.length.toLocaleString('pt-BR')} itens prontos para explorar.</p><div class="hero-actions" style="justify-content:center"><button class="primary" id="openCatalog">Explorar conteúdo</button><button class="secondary" id="changePlaylist">Trocar playlist</button></div></div>`;
-    $('#openCatalog').onclick = () => showCatalog('all');
-    $('#changePlaylist').onclick = () => openModal(els.playlistModal);
-    stats();
-  }
 
-  function destroyHls() {
-    if (state.hls) { try { state.hls.destroy(); } catch (_) {} state.hls = null; }
-  }
+    channels = parsed;
 
-  async function playItem(item) {
-    if (!item?.url) return;
-    destroyHls();
-    els.playerTitle.textContent = item.title;
-    els.playerMeta.textContent = `${item.type}${item.group ? ` • ${item.group}` : ''}`;
-    els.playerNotice.textContent = 'Preparando reprodução…';
-    els.video.removeAttribute('src'); els.video.load();
-    openModal(els.playerModal);
+    save();
 
-    const url = item.url;
-    const isHls = /\.m3u8(?:$|\?)/i.test(url) || /application\/vnd\.apple\.mpegurl/i.test(item.mime || '');
+    const status =
+      document.getElementById("fileStatus");
 
-    // Safari/iOS: prefer native HLS. Outros navegadores: hls.js quando disponível.
-    if (isHls && window.Hls && Hls.isSupported()) {
-      state.hls = new Hls({ enableWorker: true, lowLatencyMode: true });
-      state.hls.loadSource(url);
-      state.hls.attachMedia(els.video);
-      state.hls.on(Hls.Events.MANIFEST_PARSED, () => {
-        els.playerNotice.textContent = 'HLS pronto. Pressione play se o navegador não iniciar automaticamente.';
-        els.video.play().catch(() => {});
-      });
-      state.hls.on(Hls.Events.ERROR, (_, data) => {
-        if (data?.fatal) els.playerNotice.textContent = 'O servidor recusou a reprodução ou não permite acesso pelo navegador (CORS/rede).';
-      });
-    } else {
-      els.video.src = url;
-      els.video.addEventListener('loadedmetadata', () => { els.playerNotice.textContent = 'Reprodução pronta.'; }, { once: true });
-      els.video.addEventListener('error', () => { els.playerNotice.textContent = 'Não foi possível reproduzir este item neste navegador. O servidor pode bloquear CORS ou o formato pode não ser compatível.'; }, { once: true });
-      els.video.play().catch(() => {});
+    if(status){
+      status.textContent =
+        `✓ ${parsed.length} canais importados.`;
     }
+
+    toast(
+      `${parsed.length} canais carregados`
+    );
+
+    setTimeout(showHome,400);
+  };
+
+  reader.onerror = () => {
+    toast(
+      "Não foi possível ler o arquivo."
+    );
+  };
+
+  reader.readAsText(file);
+}
+
+async function importURL(){
+
+  const input =
+    document.getElementById("playlistUrl");
+
+  const url =
+    input.value.trim();
+
+  if(!url){
+    toast("Cole a URL da playlist.");
+    return;
   }
 
-  async function importFile(file) {
-    if (!file) { toast('Selecione um arquivo M3U/M3U8 primeiro.'); return; }
-    try {
-      els.loadFile.disabled = true; els.loadFile.textContent = 'Lendo…';
-      const text = await file.text();
-      const parsed = parseM3U(text);
-      if (!parsed.length) throw new Error('empty');
-      state.playlist = parsed;
-      state.filter = 'all'; state.group = ''; state.query = '';
-      els.search.value = '';
-      await savePlaylist(parsed);
-      rebuildGroups(); renderLibrary(); showCatalog('all', false); closeModal(els.playlistModal);
-      toast(`${parsed.length.toLocaleString('pt-BR')} itens carregados com sucesso.`);
-    } catch (err) {
-      toast(err.message === 'empty' ? 'Não encontrei entradas válidas nessa playlist M3U/M3U8.' : 'Não foi possível ler o arquivo.');
-    } finally {
-      els.loadFile.disabled = false; els.loadFile.textContent = 'Carregar arquivo';
+  try{
+
+    const res = await fetch(url);
+
+    if(!res.ok){
+      throw new Error("HTTP " + res.status);
     }
+
+    const text =
+      await res.text();
+
+    const parsed =
+      parseM3U(text);
+
+    if(!parsed.length){
+      throw new Error("Lista vazia");
+    }
+
+    channels = parsed;
+
+    save();
+
+    toast(
+      `${parsed.length} canais carregados`
+    );
+
+    showHome();
+
+  }catch(e){
+
+    toast(
+      "A URL foi bloqueada ou não retornou uma M3U válida."
+    );
+
+  }
+}
+
+function parseM3U(text){
+
+  const lines =
+    text
+      .replace(/^\uFEFF/,"")
+      .split(/\r?\n/);
+
+  const out = [];
+
+  for(let i=0;i<lines.length;i++){
+
+    let line =
+      lines[i].trim();
+
+    if(!line.startsWith("#EXTINF")){
+      continue;
+    }
+
+    let url = "";
+
+    for(
+      let j=i+1;
+      j<lines.length;
+      j++
+    ){
+
+      if(
+        lines[j].trim() &&
+        !lines[j].trim().startsWith("#")
+      ){
+
+        url =
+          lines[j].trim();
+
+        i=j;
+
+        break;
+      }
+    }
+
+    if(!url){
+      continue;
+    }
+
+    const name =
+      line.includes(",")
+        ? line
+            .slice(line.indexOf(",")+1)
+            .trim()
+        : "Canal";
+
+    const group =
+      (line.match(
+        /group-title="([^"]*)"/i
+      ) || [])[1] ||
+      "Outros";
+
+    const logo =
+      (line.match(
+        /tvg-logo="([^"]*)"/i
+      ) || [])[1] ||
+      "";
+
+    out.push({
+      name,
+      group,
+      logo,
+      url,
+      now:"Programação",
+      next:"Próximo programa",
+      art:"a" + ((out.length)%6+1)
+    });
   }
 
-  // Eventos
-  $('#addTop').onclick = () => openModal(els.playlistModal);
-  $('#addHero').onclick = () => openModal(els.playlistModal);
-  $('#addEmpty').onclick = () => openModal(els.playlistModal);
-  $('#explore').onclick = () => state.playlist.length ? showCatalog('all') : openModal(els.playlistModal);
-  $('#fileInput').onchange = e => { const f = e.target.files[0]; els.fileName.textContent = f ? f.name : 'Nenhum arquivo selecionado'; };
-  $('#loadFile').onclick = () => importFile(els.fileInput.files[0]);
-  els.loadMore.onclick = () => { state.visible += 120; renderGrid(); };
-  els.search.oninput = e => { state.query = e.target.value.trim(); state.visible = 120; renderGrid(); };
-  els.groupSelect.onchange = e => { state.group = e.target.value; state.visible = 120; renderGrid(); };
-  $$('.tab').forEach(tab => tab.onclick = () => showCatalog(tab.dataset.filter));
-  $$('.stat').forEach(stat => stat.onclick = () => stat.dataset.stat === 'Categorias' ? showCatalog('all') : showCatalog(stat.dataset.stat));
-  $$('[data-go]').forEach(btn => btn.onclick = () => { showCatalog(btn.dataset.go === 'inicio' ? 'all' : btn.dataset.go, btn.dataset.go !== 'inicio'); if (btn.dataset.go === 'inicio') window.scrollTo({top:0,behavior:'smooth'}); });
-  $('#mobileMenu').onclick = () => els.nav.classList.toggle('open');
-  $$('[data-close]').forEach(btn => btn.onclick = () => closeModal($('#' + btn.dataset.close)));
-  [els.playlistModal, els.playerModal].forEach(modal => modal.addEventListener('click', e => { if (e.target === modal) closeModal(modal); }));
-  document.addEventListener('keydown', e => { if (e.key === 'Escape') { closeModal(els.playlistModal); closeModal(els.playerModal); } });
-  els.playerModal.addEventListener('click', e => { if (e.target === els.playerModal) { destroyHls(); els.video.pause(); els.video.removeAttribute('src'); els.video.load(); } });
-  $('#playerModal').querySelector('.close').addEventListener('click', () => { destroyHls(); els.video.pause(); els.video.removeAttribute('src'); els.video.load(); });
+  return out;
+}
 
-  ['dragenter','dragover'].forEach(type => els.dropzone.addEventListener(type, e => { e.preventDefault(); els.dropzone.classList.add('drag'); }));
-  ['dragleave','drop'].forEach(type => els.dropzone.addEventListener(type, e => { e.preventDefault(); els.dropzone.classList.remove('drag'); }));
-  els.dropzone.addEventListener('drop', e => { const f = e.dataTransfer.files[0]; if (f) { els.fileInput.files = e.dataTransfer.files; els.fileName.textContent = f.name; importFile(f); } });
+function clearPlaylist(){
 
-  (async () => {
-    state.playlist = await loadPlaylist();
-    rebuildGroups(); renderLibrary(); stats();
-  })();
-})();
+  channels = demoChannels;
+
+  localStorage.removeItem(
+    "sinal_channels"
+  );
+
+  toast("Playlist removida");
+
+  showHome();
+}
+
+function playItem(item){
+
+  const title =
+    document.getElementById("modalTitle");
+
+  const desc =
+    document.getElementById("modalDesc");
+
+  const video =
+    document.getElementById("modalVideo");
+
+  const fallback =
+    document.getElementById("playerFallback");
+
+  title.textContent =
+    item.name || "Sinal IPTV";
+
+  desc.textContent =
+    (item.group || "Conteúdo") +
+    " • " +
+    (
+      item.url
+        ? "Fonte carregada da playlist"
+        : "Demonstração"
+    );
+
+  fallback.classList.add("hidden");
+  video.classList.remove("hidden");
+
+  video.pause();
+  video.removeAttribute("src");
+  video.load();
+
+  if(!item.url){
+
+    video.classList.add("hidden");
+
+    fallback.classList.remove("hidden");
+
+    fallback.innerHTML = `
+      <strong>
+        Conteúdo de demonstração
+      </strong>
+
+      <span>
+        Adicione sua playlist M3U para
+        reproduzir seus canais.
+      </span>
+    `;
+
+  }else{
+
+    video.src = item.url;
+
+    video.play().catch(() => {});
+  }
+
+  document
+    .getElementById("playerModal")
+    .classList.add("open");
+}
+
+function closePlayer(){
+
+  const video =
+    document.getElementById("modalVideo");
+
+  video.pause();
+
+  video.removeAttribute("src");
+
+  video.load();
+
+  document
+    .getElementById("playerModal")
+    .classList.remove("open");
+}
+
+function toggleFavorite(id){
+
+  if(favorites.includes(id)){
+
+    favorites =
+      favorites.filter(
+        x => x !== id
+      );
+
+  }else{
+
+    favorites.push(id);
+  }
+
+  localStorage.setItem(
+    "sinal_favorites",
+    JSON.stringify(favorites)
+  );
+
+  toast(
+    favorites.includes(id)
+      ? "Adicionado à sua lista ✓"
+      : "Removido da sua lista"
+  );
+
+  if(
+    document
+      .getElementById("listNav")
+      ?.classList.contains("active")
+  ){
+    showList();
+  }
+}
+
+function doSearch(q){
+
+  clearTimeout(searchTimer);
+
+  searchTimer =
+    setTimeout(() => {
+
+      q =
+        q.trim().toLowerCase();
+
+      if(!q){
+
+        showHome();
+
+        return;
+      }
+
+      const found = [
+
+        ...channels.map(c => ({
+          ...c,
+          title:c.name
+        })),
+
+        ...movies.map((x,i) => ({
+          name:x,
+          title:x,
+          group:i%2 ? "Série" : "Filme",
+          url:"",
+          art:"c" + (i%6+1)
+        }))
+
+      ].filter(x =>
+        (x.title || x.name)
+          .toLowerCase()
+          .includes(q)
+      );
+
+      setActive(null);
+
+      app.innerHTML = `
+
+        <main class="searchPage">
+
+          <div class="sectionHead">
+
+            <div>
+
+              <small>RESULTADOS</small>
+
+              <h2>Busca</h2>
+
+            </div>
+
+            <span
+              style="
+                font-size:9px;
+                color:#666
+              "
+            >
+              ${found.length}
+              encontrados
+            </span>
+
+          </div>
+
+          <div class="results">
+
+            ${found.map(x => `
+
+              <button
+                class="result"
+                onclick='playItem(${safeJSON(x)})'
+              >
+
+                <div
+                  class="resultArt ${x.art || "a1"}"
+                ></div>
+
+                <small>
+                  ${esc(x.group || "Conteúdo")}
+                </small>
+
+                <b>
+                  ${esc(x.title || x.name)}
+                </b>
+
+              </button>
+
+            `).join("")}
+
+          </div>
+
+        </main>
+      `;
+
+    },100);
+}
+
+function toast(msg){
+
+  const t =
+    document.getElementById("toast");
+
+  t.textContent = msg;
+
+  t.classList.add("show");
+
+  setTimeout(() => {
+    t.classList.remove("show");
+  },1900);
+}
+
+function esc(s){
+
+  return String(s ?? "")
+    .replace(
+      /[&<>"']/g,
+      m => ({
+        "&":"&amp;",
+        "<":"&lt;",
+        ">":"&gt;",
+        '"':"&quot;",
+        "'":"&#39;"
+      }[m])
+    );
+}
+
+function safeJSON(o){
+
+  return JSON
+    .stringify(o)
+    .replace(/</g,"\\u003c");
+}
+
+document
+  .getElementById("searchInput")
+  .addEventListener(
+    "input",
+    e => doSearch(e.target.value)
+  );
+
+document
+  .getElementById("playerModal")
+  .addEventListener(
+    "click",
+    e => {
+
+      if(e.target.id === "playerModal"){
+        closePlayer();
+      }
+
+    }
+  );
+
+load();
+showHome();
