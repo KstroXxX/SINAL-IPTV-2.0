@@ -1,2446 +1,1027 @@
 (() => {
-
   "use strict";
-
-
-  /* =====================================================
-     SINAL IPTV
-     Playlist M3U -> Parser -> Biblioteca -> Player
-  ===================================================== */
-
 
   const $ = (selector, root = document) =>
     root.querySelector(selector);
 
-
   const $$ = (selector, root = document) =>
     [...root.querySelectorAll(selector)];
 
-
-  const STORAGE = {
-    favorites: "sinal_favorites_v2",
-    history: "sinal_history_v2",
-    settings: "sinal_settings_v2"
-  };
-
+  const sleep = ms =>
+    new Promise(resolve => setTimeout(resolve, ms));
 
   const state = {
-
-    items: [],
-
-    categories: [],
-
-    category: "all",
-
+    playlist: [],
     search: "",
-
+    category: "all",
+    section: "all",
     favoritesOnly: false,
-
+    favorites: new Set(),
     current: null,
-
     hero: null,
-
-    hls: null,
-
-    visiblePerRow: 40,
-
-    playlistName: "Minha playlist"
-
+    hls: null
   };
 
-
-  /* =====================================================
-     ELEMENTOS
-  ===================================================== */
-
-  const splash =
-    $("#splash");
-
-  const setupScreen =
-    $("#setupScreen");
-
-  const loadingScreen =
-    $("#loadingScreen");
-
-  const homeScreen =
-    $("#homeScreen");
-
-  const loadingText =
-    $("#loadingText");
-
-  const loadingProgress =
-    $("#loadingProgress");
-
-  const setupMessage =
-    $("#setupMessage");
-
-  const library =
-    $("#library");
-
-  const navigation =
-    $("#navigation");
-
-  const search =
-    $("#search");
-
-  const toast =
-    $("#toast");
-
-  const playerModal =
-    $("#playerModal");
-
-  const video =
-    $("#video");
-
-  const playerLoading =
-    $("#playerLoading");
-
-  const playerError =
-    $("#playerError");
-
-  const playerErrorText =
-    $("#playerErrorText");
-
-
-  /* =====================================================
-     UTILITÁRIOS
-  ===================================================== */
-
-  function sleep(ms) {
-
-    return new Promise(
-      resolve => setTimeout(
-        resolve,
-        ms
-      )
-    );
-
-  }
-
+  const splash = $("#splash");
+  const setupScreen = $("#setupScreen");
+  const loadingScreen = $("#loadingScreen");
+  const homeScreen = $("#homeScreen");
+  const search = $("#search");
+  const video = $("#videoPlayer");
+  const playerModal = $("#playerModal");
 
   function escapeHTML(value) {
-
     return String(value ?? "")
       .replace(/&/g, "&amp;")
       .replace(/</g, "&lt;")
       .replace(/>/g, "&gt;")
       .replace(/"/g, "&quot;")
       .replace(/'/g, "&#039;");
-
   }
 
-
-  function normalizeURL(value) {
-
-    return String(value ?? "")
-      .trim()
-      .replace(/^['"]|['"]$/g, "");
-
-  }
-
-
-  function slug(value) {
-
+  function normalize(value) {
     return String(value ?? "")
       .normalize("NFD")
       .replace(/[\u0300-\u036f]/g, "")
       .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-|-$/g, "");
-
+      .trim();
   }
 
-
-  function hash(value) {
-
-    let h = 2166136261;
-
-
-    const text =
-      String(value ?? "");
-
-
-    for (
-      let i = 0;
-      i < text.length;
-      i++
-    ) {
-
-      h ^= text.charCodeAt(i);
-
-      h =
-        Math.imul(
-          h,
-          16777619
-        );
-
-    }
-
-
-    return (
-      h >>> 0
-    ).toString(36);
-
+  function uid(item) {
+    return [
+      item.title,
+      item.url,
+      item.group,
+      item.type
+    ]
+      .map(normalize)
+      .join("|");
   }
 
+  function showSetup() {
+    loadingScreen?.classList.add("hidden");
+    homeScreen?.classList.add("hidden");
+    setupScreen?.classList.remove("hidden");
+  }
+
+  function showLoading(text = "Lendo playlist...") {
+    setupScreen?.classList.add("hidden");
+    homeScreen?.classList.add("hidden");
+    loadingScreen?.classList.remove("hidden");
+
+    const loadingText = $("#loadingText");
+    if (loadingText) loadingText.textContent = text;
+
+    const progress = $("#loadingProgress");
+    if (progress) progress.style.width = "20%";
+  }
+
+  function hideLoading() {
+    loadingScreen?.classList.add("hidden");
+  }
+
+  function setSetupMessage(message, type = "error") {
+    const el = $("#setupMessage");
+
+    if (!el) return;
+
+    el.textContent = message || "";
+    el.className =
+      `setup-message ${message ? type : ""}`;
+  }
 
   function showToast(message) {
+    let toast = $("#sinalToast");
 
-    if (!toast) return;
-
-
-    toast.textContent =
-      message;
-
-
-    toast.classList.add(
-      "show"
-    );
-
-
-    clearTimeout(
-      showToast.timer
-    );
-
-
-    showToast.timer =
-      setTimeout(() => {
-
-        toast.classList.remove(
-          "show"
-        );
-
-      }, 3000);
-
-  }
-
-
-  function setSetupMessage(
-    message
-  ) {
-
-    if (!setupMessage) {
-      return;
+    if (!toast) {
+      toast = document.createElement("div");
+      toast.id = "sinalToast";
+      toast.className = "sinal-toast";
+      document.body.appendChild(toast);
     }
 
+    toast.textContent = message;
+    toast.classList.add("show");
 
-    setupMessage.textContent =
-      message;
+    clearTimeout(toast._timer);
 
+    toast._timer = setTimeout(() => {
+      toast.classList.remove("show");
+    }, 2800);
   }
-
 
   /* =====================================================
-     STORAGE
+     PLAYLIST M3U
   ===================================================== */
 
-  function readJSON(
-    key,
-    fallback
-  ) {
+  function parseM3U(text) {
+    const lines = String(text || "")
+      .replace(/\r/g, "")
+      .split("\n")
+      .map(line => line.trim());
 
-    try {
+    const items = [];
 
-      const value =
-        localStorage.getItem(
-          key
-        );
+    let metadata = null;
 
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
 
-      return value
-        ? JSON.parse(value)
-        : fallback;
+      if (!line) continue;
 
-    } catch {
+      if (line.startsWith("#EXTINF")) {
+        metadata = parseExtInf(line);
+        continue;
+      }
 
-      return fallback;
+      if (
+        metadata &&
+        !line.startsWith("#")
+      ) {
+        metadata.url = line;
 
+        metadata.uid = uid(metadata);
+
+        items.push(metadata);
+
+        metadata = null;
+      }
     }
 
+    return items;
   }
 
+  function parseExtInf(line) {
+    const attrs = {};
 
-  function writeJSON(
-    key,
-    value
-  ) {
-
-    try {
-
-      localStorage.setItem(
-        key,
-        JSON.stringify(value)
-      );
-
-    } catch {
-
-      // O site continua funcionando
-      // mesmo se o storage estiver indisponível.
-
-    }
-
-  }
-
-
-  function getFavorites() {
-
-    return readJSON(
-      STORAGE.favorites,
-      []
-    );
-
-  }
-
-
-  function isFavorite(id) {
-
-    return getFavorites()
-      .includes(id);
-
-  }
-
-
-  function toggleFavorite(id) {
-
-    const favorites =
-      getFavorites();
-
-
-    const index =
-      favorites.indexOf(id);
-
-
-    if (index >= 0) {
-
-      favorites.splice(
-        index,
-        1
-      );
-
-    } else {
-
-      favorites.push(id);
-
-    }
-
-
-    writeJSON(
-      STORAGE.favorites,
-      favorites
-    );
-
-
-    renderLibrary();
-
-    renderNavigation();
-
-
-    if (
-      state.current &&
-      state.current.uid === id
-    ) {
-
-      updatePlayerFavorite();
-
-    }
-
-  }
-
-
-  function addHistory(item) {
-
-    const history =
-      readJSON(
-        STORAGE.history,
-        []
-      );
-
-
-    const clean =
-      history.filter(
-        entry =>
-          entry.uid !== item.uid
-      );
-
-
-    clean.unshift({
-
-      uid: item.uid,
-
-      title: item.title,
-
-      group: item.group,
-
-      logo: item.logo,
-
-      url: item.url,
-
-      timestamp:
-        Date.now()
-
-    });
-
-
-    writeJSON(
-      STORAGE.history,
-      clean.slice(0, 50)
-    );
-
-  }
-
-
-  function getHistory() {
-
-    return readJSON(
-      STORAGE.history,
-      []
-    );
-
-  }
-
-
-  /* =====================================================
-     PARSER M3U
-  ===================================================== */
-
-  function parseAttributes(
-    line
-  ) {
-
-    const attributes = {};
-
-    const regex =
-      /([A-Za-z0-9_-]+)\s*=\s*"([^"]*)"/g;
+    const attributeRegex =
+      /([\w-]+)="([^"]*)"/g;
 
     let match;
 
-
     while (
-      (match = regex.exec(line))
+      (match = attributeRegex.exec(line))
     ) {
-
-      attributes[
-        match[1].toLowerCase()
-      ] =
-        match[2].trim();
-
+      attrs[match[1].toLowerCase()] =
+        match[2];
     }
-
-
-    return attributes;
-
-  }
-
-
-  function parseExtInf(
-    line
-  ) {
 
     const comma =
       line.indexOf(",");
 
-
-    const metadata =
+    let title =
       comma >= 0
-        ? line.slice(
-            0,
-            comma
-          )
-        : line;
-
-
-    const title =
-      comma >= 0
-        ? line.slice(
-            comma + 1
-          ).trim()
+        ? line.slice(comma + 1).trim()
         : "Sem título";
 
-
-    const attributes =
-      parseAttributes(
-        metadata
-      );
-
-
-    return {
-
-      title:
-        title ||
-        attributes["tvg-name"] ||
-        "Sem título",
-
-      group:
-        attributes["group-title"] ||
-        attributes["group"] ||
-        "Outros",
-
-      logo:
-        attributes["tvg-logo"] ||
-        attributes["logo"] ||
-        "",
-
-      tvgId:
-        attributes["tvg-id"] ||
-        "",
-
-      country:
-        attributes["tvg-country"] ||
-        "",
-
-      language:
-        attributes["tvg-language"] ||
-        "",
-
-      radio:
-        attributes["radio"] ||
-        ""
-
-    };
-
-  }
-
-
-  function parseM3U(
-    text,
-    progressCallback
-  ) {
-
-    const lines =
-      String(text ?? "")
-        .replace(/^\uFEFF/, "")
-        .split(/\r?\n/);
-
-
-    const result = [];
-
-    let metadata = null;
-
-    let processed = 0;
-
-
-    for (
-      let i = 0;
-      i < lines.length;
-      i++
-    ) {
-
-      const raw =
-        lines[i];
-
-
-      const line =
-        raw.trim();
-
-
-      if (!line) {
-        continue;
-      }
-
-
-      if (
-        line.startsWith(
-          "#EXTINF"
-        )
-      ) {
-
-        metadata =
-          parseExtInf(
-            line
-          );
-
-        continue;
-
-      }
-
-
-      /*
-       * Algumas playlists utilizam
-       * #EXTGRP antes da URL.
-       */
-
-      if (
-        line.startsWith(
-          "#EXTGRP:"
-        )
-      ) {
-
-        if (metadata) {
-
-          metadata.group =
-            line
-              .slice(7)
-              .trim() ||
-            metadata.group;
-
-        }
-
-        continue;
-
-      }
-
-
-      /*
-       * Linhas que não começam com #
-       * podem representar URLs de stream.
-       */
-
-      if (
-        !line.startsWith("#") &&
-        metadata
-      ) {
-
-        const url =
-          normalizeURL(
-            line
-          );
-
-
-        if (url) {
-
-          const base =
-            metadata;
-
-
-          const uid =
-            hash(
-              [
-                base.title,
-                base.group,
-                base.logo,
-                url,
-                result.length
-              ].join("|")
-            );
-
-
-          result.push({
-
-            uid,
-
-            title:
-              base.title,
-
-            group:
-              base.group ||
-              "Outros",
-
-            logo:
-              base.logo,
-
-            tvgId:
-              base.tvgId,
-
-            country:
-              base.country,
-
-            language:
-              base.language,
-
-            url
-
-          });
-
-        }
-
-
-        metadata = null;
-
-      }
-
-
-      processed++;
-
-
-      if (
-        progressCallback &&
-        processed % 5000 === 0
-      ) {
-
-        progressCallback(
-          processed,
-          lines.length
-        );
-
-      }
-
-    }
-
-
-    return result;
-
-  }
-
-
-  /* =====================================================
-     CATEGORIAS
-  ===================================================== */
-
-  function buildCategories() {
-
-    const map =
-      new Map();
-
-
-    for (
-      const item of state.items
-    ) {
-
-      const category =
-        String(
-          item.group ||
-          "Outros"
-        ).trim() ||
-        "Outros";
-
-
-      map.set(
-        category,
-        (map.get(category) || 0) + 1
-      );
-
-    }
-
-
-    state.categories =
-      [...map.entries()]
-        .sort(
-          (a, b) =>
-            b[1] - a[1]
-        );
-
-  }
-
-
-  function categoryIcon(
-    name
-  ) {
-
-    const value =
-      String(name)
-        .toLowerCase();
-
-
-    if (
-      value.includes("filme") ||
-      value.includes("movie")
-    ) {
-      return "◆";
-    }
-
-
-    if (
-      value.includes("serie") ||
-      value.includes("série")
-    ) {
-      return "▣";
-    }
-
-
-    if (
-      value.includes("sport") ||
-      value.includes("esporte") ||
-      value.includes("futebol")
-    ) {
-      return "◉";
-    }
-
-
-    if (
-      value.includes("kids") ||
-      value.includes("infantil") ||
-      value.includes("child")
-    ) {
-      return "✦";
-    }
-
-
-    if (
-      value.includes("news") ||
-      value.includes("noticia") ||
-      value.includes("notícia")
-    ) {
-      return "◌";
-    }
-
-
-    if (
-      value.includes("document")
-    ) {
-      return "◇";
-    }
-
-
-    return "•";
-
-  }
-
-
-  /* =====================================================
-     NAVEGAÇÃO
-  ===================================================== */
-
-  function renderNavigation() {
-
-    if (!navigation) {
-      return;
-    }
-
-
-    const favoritesCount =
-      state.items.filter(
-        item =>
-          isFavorite(
-            item.uid
-          )
-      ).length;
-
-
-    let html = `
-
-      <button
-        type="button"
-        data-category="all"
-        class="${
-          state.category === "all" &&
-          !state.favoritesOnly
-            ? "active"
-            : ""
-        }"
-      >
-
-        <span>⌂</span>
-
-        Início
-
-      </button>
-
-
-      <button
-        type="button"
-        data-favorites="true"
-        class="${
-          state.favoritesOnly
-            ? "active"
-            : ""
-        }"
-      >
-
-        <span>☆</span>
-
-        Favoritos
-
-        <span class="count">
-          ${favoritesCount}
-        </span>
-
-      </button>
-
-    `;
-
-
-    for (
-      const [
-        category,
-        count
-      ] of state.categories
-    ) {
-
-      html += `
-
-        <button
-          type="button"
-          data-category="${escapeHTML(
-            category
-          )}"
-          class="${
-            state.category === category &&
-            !state.favoritesOnly
-              ? "active"
-              : ""
-          }"
-        >
-
-          <span>
-            ${categoryIcon(
-              category
-            )}
-          </span>
-
-          ${escapeHTML(
-            category
-          )}
-
-          <span class="count">
-            ${count.toLocaleString(
-              "pt-BR"
-            )}
-          </span>
-
-        </button>
-
-      `;
-
-    }
-
-
-    navigation.innerHTML =
-      html;
-
-
-    $$(
-      "button",
-      navigation
-    ).forEach(button => {
-
-      button.addEventListener(
-        "click",
-        () => {
-
-          if (
-            button.dataset.favorites
-          ) {
-
-            state.favoritesOnly =
-              true;
-
-            state.category =
-              "all";
-
-          } else {
-
-            state.favoritesOnly =
-              false;
-
-            state.category =
-              button.dataset.category ||
-              "all";
-
-          }
-
-
-          renderNavigation();
-
-          renderLibrary();
-
-
-          $("#sidebar")
-            ?.classList.remove(
-              "open"
-            );
-
-        }
-      );
-
-    });
-
-  }
-
-
-  /* =====================================================
-     DETECÇÃO DE TIPO
-  ===================================================== */
-
-  function detectType(item) {
-
-    const url =
-      String(
-        item.url || ""
-      ).toLowerCase();
-
-
-    if (
-      url.includes(".m3u8") ||
-      url.includes("m3u8?")
-    ) {
-
-      return "hls";
-
-    }
-
-
-    if (
-      url.includes(".mp4") ||
-      url.includes(".webm") ||
-      url.includes(".ogg")
-    ) {
-
-      return "video";
-
-    }
-
-
-    return "stream";
-
-  }
-
-
-  /* =====================================================
-     FILTRO
-  ===================================================== */
-
-  function getFilteredItems() {
-
-    let items =
-      state.items;
-
-
-    if (
-      state.category !== "all"
-    ) {
-
-      items =
-        items.filter(
-          item =>
-            item.group ===
-            state.category
-        );
-
-    }
-
-
-    if (
-      state.favoritesOnly
-    ) {
-
-      items =
-        items.filter(
-          item =>
-            isFavorite(
-              item.uid
-            )
-        );
-
-    }
-
-
-    if (
-      state.search
-    ) {
-
-      const query =
-        state.search
-          .toLowerCase()
-          .trim();
-
-
-      items =
-        items.filter(
-          item => {
-
-            const text =
-              [
-                item.title,
-                item.group,
-                item.country,
-                item.language,
-                item.tvgId
-              ]
-                .join(" ")
-                .toLowerCase();
-
-
-            return text.includes(
-              query
-            );
-
-          }
-        );
-
-    }
-
-
-    return items;
-
-  }
-
-
-  /* =====================================================
-     POSTER
-  ===================================================== */
-
-  function posterHTML(item) {
+    title =
+      title.replace(/^["']|["']$/g, "");
+
+    const group =
+      attrs["group-title"] ||
+      attrs["group"] ||
+      "Outros";
 
     const logo =
-      normalizeURL(
-        item.logo
-      );
+      attrs["tvg-logo"] ||
+      attrs["logo"] ||
+      "";
 
+    const tvgName =
+      attrs["tvg-name"] ||
+      "";
 
-    const image =
-      logo
+    const tvgId =
+      attrs["tvg-id"] ||
+      "";
 
-        ? `
+    return {
+      title:
+        tvgName ||
+        title ||
+        "Sem título",
 
-          <img
-            src="${escapeHTML(
-              logo
-            )}"
-            alt=""
-            loading="lazy"
-            referrerpolicy="no-referrer"
-            onerror="
-              this.style.display='none';
-              this.nextElementSibling.classList.remove('hidden');
-            "
-          >
+      group,
+      logo,
+      tvgId,
 
-          <div
-            class="poster-placeholder hidden"
-          >
-            ${categoryIcon(
-              item.group
-            )}
-          </div>
+      type:
+        detectType(
+          group,
+          title,
+          attrs
+        ),
 
-        `
-
-        : `
-
-          <div
-            class="poster-placeholder"
-          >
-            ${categoryIcon(
-              item.group
-            )}
-          </div>
-
-        `;
-
-
-    return image;
-
+      url: ""
+    };
   }
 
-
-  /* =====================================================
-     CARD
-  ===================================================== */
-
-  function cardHTML(item) {
-
-    const favorite =
-      isFavorite(
-        item.uid
+  function detectType(group, title, attrs = {}) {
+    const text =
+      normalize(
+        `${group} ${title} ${attrs["content-type"] || ""}`
       );
 
+    if (
+      text.includes("serie") ||
+      text.includes("series") ||
+      text.includes("season") ||
+      text.includes("temporada") ||
+      text.includes("s01") ||
+      text.includes("s02")
+    ) {
+      return "series";
+    }
+
+    if (
+      text.includes("filme") ||
+      text.includes("filmes") ||
+      text.includes("movie") ||
+      text.includes("movies") ||
+      text.includes("cinema")
+    ) {
+      return "movies";
+    }
+
+    return "channels";
+  }
+
+  /* =====================================================
+     CAPA
+  ===================================================== */
+
+  function getPlaceholder(item) {
+    const letter =
+      escapeHTML(
+        String(item.title || "S")
+          .charAt(0)
+          .toUpperCase()
+      );
 
     return `
+      <div class="card-placeholder">
+        <span>${letter}</span>
+      </div>
+    `;
+  }
 
-      <button
+  function cardHTML(item) {
+    const favorite =
+      state.favorites.has(item.uid);
+
+    const logo =
+      item.logo
+        ? `
+          <img
+            src="${escapeHTML(item.logo)}"
+            alt=""
+            loading="lazy"
+            onerror="this.style.display='none'"
+          >
+        `
+        : getPlaceholder(item);
+
+    return `
+      <article
         class="media-card"
-        type="button"
-        data-id="${escapeHTML(
-          item.uid
-        )}"
+        data-uid="${escapeHTML(item.uid)}"
       >
 
-        <div class="card-poster">
+        <button
+          class="card-favorite ${favorite ? "active" : ""}"
+          data-action="favorite"
+          data-uid="${escapeHTML(item.uid)}"
+          type="button"
+          aria-label="Favorito"
+        >
+          ${favorite ? "★" : "☆"}
+        </button>
 
-          ${posterHTML(
-            item
-          )}
+        <button
+          class="card-body"
+          data-action="play"
+          data-uid="${escapeHTML(item.uid)}"
+          type="button"
+        >
 
+          <div class="card-poster">
+            ${logo}
+          </div>
 
-          <div class="card-overlay">
+          <div class="card-info">
 
-            <span class="play-circle">
-              ▶
+            <strong>
+              ${escapeHTML(item.title)}
+            </strong>
+
+            <span>
+              ${escapeHTML(item.group || "Outros")}
             </span>
 
           </div>
 
+        </button>
 
-          <button
-            class="card-favorite"
-            type="button"
-            data-favorite="${escapeHTML(
-              item.uid
-            )}"
-            aria-label="Favorito"
-          >
-            ${
-              favorite
-                ? "★"
-                : "☆"
-            }
-          </button>
-
-        </div>
-
-
-        <div class="card-title">
-          ${escapeHTML(
-            item.title
-          )}
-        </div>
-
-
-        <div class="card-meta">
-          ${escapeHTML(
-            item.group
-          )}
-        </div>
-
-      </button>
-
+      </article>
     `;
-
   }
 
-
   /* =====================================================
-     CATEGORY ROW
+     FILTROS
   ===================================================== */
 
-  function categoryRowHTML(
-    title,
-    items,
-    delay
-  ) {
+  function getFilteredItems() {
+    let items = [...state.playlist];
 
-    const list =
-      items.slice(
-        0,
-        state.visiblePerRow
-      );
+    if (state.section !== "all") {
+      items =
+        items.filter(
+          item =>
+            item.type === state.section
+        );
+    }
 
+    if (
+      state.category !== "all"
+    ) {
+      items =
+        items.filter(
+          item =>
+            normalize(item.group) ===
+            normalize(state.category)
+        );
+    }
 
-    if (!list.length) {
+    if (state.favoritesOnly) {
+      items =
+        items.filter(
+          item =>
+            state.favorites.has(item.uid)
+        );
+    }
+
+    const query =
+      normalize(state.search);
+
+    if (query) {
+      items =
+        items.filter(item => {
+          const haystack =
+            normalize(
+              `${item.title} ${item.group} ${item.tvgId}`
+            );
+
+          return haystack.includes(query);
+        });
+    }
+
+    return items;
+  }
+
+  function getCategories(type) {
+    const groups = new Map();
+
+    state.playlist
+      .filter(item =>
+        item.type === type
+      )
+      .forEach(item => {
+        const key =
+          item.group ||
+          "Outros";
+
+        const normalized =
+          normalize(key);
+
+        if (!groups.has(normalized)) {
+          groups.set(
+            normalized,
+            {
+              name: key,
+              items: []
+            }
+          );
+        }
+
+        groups
+          .get(normalized)
+          .items
+          .push(item);
+      });
+
+    return [...groups.values()];
+  }
+
+  /* =====================================================
+     FILEIRAS HORIZONTAIS
+  ===================================================== */
+
+  function renderRow(title, items) {
+    if (!items.length) {
       return "";
     }
 
-
     return `
+      <section class="content-row">
 
-      <section
-        class="category-section"
-        style="animation-delay:${delay}ms"
-      >
-
-        <div class="category-header">
+        <div class="row-heading">
 
           <h2>
-            ${escapeHTML(
-              title
-            )}
+            ${escapeHTML(title)}
           </h2>
 
           <span>
-            ${items.length.toLocaleString(
-              "pt-BR"
-            )} conteúdos
+            ${items.length}
           </span>
 
         </div>
 
+        <div class="media-row">
 
-        <div class="card-row">
-
-          ${list
-            .map(
-              cardHTML
-            )
+          ${items
+            .map(cardHTML)
             .join("")}
 
         </div>
 
       </section>
-
     `;
-
   }
 
+  function renderSectionRows(type, title) {
+    const categories =
+      getCategories(type);
 
-  /* =====================================================
-     HOME / ROWS
-  ===================================================== */
+    let html = "";
+
+    categories.forEach(category => {
+      const items =
+        category.items.filter(item =>
+          matchesSearch(item)
+        );
+
+      if (items.length) {
+        html +=
+          renderRow(
+            category.name,
+            items
+          );
+      }
+    });
+
+    if (!html) {
+      const items =
+        getFilteredItems();
+
+      if (items.length) {
+        html =
+          renderRow(
+            title,
+            items
+          );
+      }
+    }
+
+    return html;
+  }
+
+  function matchesSearch(item) {
+    const query =
+      normalize(state.search);
+
+    if (!query) return true;
+
+    return normalize(
+      `${item.title} ${item.group} ${item.tvgId}`
+    ).includes(query);
+  }
 
   function renderLibrary() {
+    const container =
+      $("#library");
 
-    if (!library) {
-      return;
-    }
+    if (!container) return;
 
+    const query =
+      normalize(state.search);
 
-    const filtered =
-      getFilteredItems();
-
-
-    /*
-     * Pesquisa global:
-     * mostra uma única grade horizontal.
-     */
-
-    if (
-      state.search ||
-      state.favoritesOnly ||
-      state.category !== "all"
-    ) {
-
-      const title =
-        state.search
-          ? `Resultados para "${state.search}"`
-          : state.favoritesOnly
-            ? "Meus favoritos"
-            : state.category;
-
-
-      library.innerHTML =
-        categoryRowHTML(
-          title,
-          filtered,
-          0
-        );
-
-
-      if (!filtered.length) {
-
-        library.innerHTML = "";
-
-        $("#emptySearch")
-          ?.classList.remove(
-            "hidden"
-          );
-
-      } else {
-
-        $("#emptySearch")
-          ?.classList.add(
-            "hidden"
-          );
-
-      }
-
-
-      attachCardEvents();
-
-      return;
-
-    }
-
-
-    $("#emptySearch")
-      ?.classList.add(
-        "hidden"
-      );
-
+    let html = "";
 
     /*
-     * HOME
+     * Quando o usuário está pesquisando,
+     * mostramos os resultados em uma única
+     * fileira organizada.
      */
 
-    const rows = [];
-
-
-    /*
-     * Continue assistindo
-     */
-
-    const history =
-      getHistory();
-
-
-    const historyItems =
-      history
-        .map(
-          entry =>
-            state.items.find(
-              item =>
-                item.uid ===
-                entry.uid
-            )
-        )
-        .filter(Boolean);
-
-
-    if (historyItems.length) {
-
-      rows.push({
-
-        title:
-          "Continue assistindo",
-
-        items:
-          historyItems
-
-      });
-
-    }
-
-
-    /*
-     * Favoritos
-     */
-
-    const favoriteItems =
-      state.items.filter(
-        item =>
-          isFavorite(
-            item.uid
-          )
-      );
-
-
-    if (favoriteItems.length) {
-
-      rows.push({
-
-        title:
-          "Minha lista",
-
-        items:
-          favoriteItems
-
-      });
-
-    }
-
-
-    /*
-     * Destaques
-     */
-
-    if (state.items.length) {
-
-      const shuffled =
-        [...state.items]
-          .sort(
-            () =>
-              Math.random() - .5
-          )
-          .slice(0, 40);
-
-
-      rows.push({
-
-        title:
-          "Em destaque",
-
-        items:
-          shuffled
-
-      });
-
-    }
-
-
-    /*
-     * Todas as categorias.
-     */
-
-    const used =
-      new Set();
-
-
-    for (
-      const [
-        category
-      ] of state.categories
-    ) {
-
+    if (query || state.favoritesOnly) {
       const items =
-        state.items.filter(
-          item =>
-            item.group ===
-            category
+        getFilteredItems();
+
+      html =
+        items.length
+          ? renderRow(
+              state.favoritesOnly
+                ? "Meus favoritos"
+                : "Resultados da busca",
+              items
+            )
+          : `
+            <div class="empty-state">
+              <div>⌕</div>
+              <h3>Nada encontrado</h3>
+              <p>
+                Tente outro nome, categoria ou título.
+              </p>
+            </div>
+          `;
+
+      container.innerHTML = html;
+      bindCards();
+      return;
+    }
+
+    /*
+     * Tela inicial:
+     * primeiro os três grandes grupos.
+     */
+
+    if (state.section === "all") {
+
+      html +=
+        renderFeaturedType(
+          "movies",
+          "Filmes"
         );
 
-
-      if (
-        items.length &&
-        !used.has(category)
-      ) {
-
-        rows.push({
-
-          title:
-            category,
-
-          items
-
-        });
-
-
-        used.add(
-          category
+      html +=
+        renderFeaturedType(
+          "series",
+          "Séries"
         );
 
-      }
+      html +=
+        renderFeaturedType(
+          "channels",
+          "Canais"
+        );
+
+    } else if (
+      state.section === "movies"
+    ) {
+
+      html =
+        renderSectionRows(
+          "movies",
+          "Filmes"
+        );
+
+    } else if (
+      state.section === "series"
+    ) {
+
+      html =
+        renderSectionRows(
+          "series",
+          "Séries"
+        );
+
+    } else if (
+      state.section === "channels"
+    ) {
+
+      html =
+        renderSectionRows(
+          "channels",
+          "Canais"
+        );
 
     }
 
+    if (!html) {
+      html = `
+        <div class="empty-state">
+          <div>✦</div>
+          <h3>Sua biblioteca está vazia</h3>
+          <p>
+            Adicione uma playlist para começar.
+          </p>
+        </div>
+      `;
+    }
 
-    library.innerHTML =
-      rows
-        .map(
-          (row, index) =>
-            categoryRowHTML(
-              row.title,
-              row.items,
-              index * 45
-            )
-        )
-        .join("");
+    container.innerHTML = html;
 
-
-    attachCardEvents();
-
+    bindCards();
   }
 
+  function renderFeaturedType(type, title) {
+    const items =
+      state.playlist.filter(
+        item =>
+          item.type === type
+      );
+
+    if (!items.length) {
+      return "";
+    }
+
+    /*
+     * Na home mostramos uma seleção
+     * representativa do grupo.
+     * Ao entrar no grupo, todas as
+     * categorias aparecem.
+     */
+
+    const limit =
+      Math.min(items.length, 20);
+
+    return renderRow(
+      title,
+      items.slice(0, limit)
+    );
+  }
 
   /* =====================================================
-     CARD EVENTS
-  ===================================================== */
+     NAVEGAÇÃO
+     ===================================================== */
 
-  function attachCardEvents() {
+  function renderNavigation() {
+    const nav =
+      $("#navigation");
 
-    $$(".media-card")
-      .forEach(card => {
+    if (!nav) return;
 
-        card.addEventListener(
-          "click",
-          event => {
+    const counts = {
+      movies:
+        state.playlist.filter(
+          i => i.type === "movies"
+        ).length,
 
-            /*
-             * O botão de favorito possui
-             * seu próprio evento.
-             */
+      series:
+        state.playlist.filter(
+          i => i.type === "series"
+        ).length,
 
-            if (
-              event.target.closest(
-                "[data-favorite]"
-              )
-            ) {
-              return;
-            }
+      channels:
+        state.playlist.filter(
+          i => i.type === "channels"
+        ).length
+    };
 
+    nav.innerHTML = `
+      <button
+        class="nav-item ${state.section === "all" ? "active" : ""}"
+        data-section="all"
+        type="button"
+      >
+        <span>⌂</span>
+        <b>Início</b>
+      </button>
 
-            const id =
-              card.dataset.id;
+      <button
+        class="nav-item ${state.section === "movies" ? "active" : ""}"
+        data-section="movies"
+        type="button"
+      >
+        <span>▣</span>
+        <b>Filmes</b>
+        <small>${counts.movies}</small>
+      </button>
 
+      <button
+        class="nav-item ${state.section === "series" ? "active" : ""}"
+        data-section="series"
+        type="button"
+      >
+        <span>▤</span>
+        <b>Séries</b>
+        <small>${counts.series}</small>
+      </button>
 
-            const item =
-              state.items.find(
-                x =>
-                  x.uid === id
-              );
+      <button
+        class="nav-item ${state.section === "channels" ? "active" : ""}"
+        data-section="channels"
+        type="button"
+      >
+        <span>◉</span>
+        <b>Canais</b>
+        <small>${counts.channels}</small>
+      </button>
 
+      <button
+        class="nav-item ${state.favoritesOnly ? "active" : ""}"
+        data-favorites="true"
+        type="button"
+      >
+        <span>☆</span>
+        <b>Favoritos</b>
+      </button>
+    `;
 
-            if (item) {
-
-              openPlayer(
-                item
-              );
-
-            }
-
-          }
-        );
-
-      });
-
-
-    $$(
-      "[data-favorite]"
-    )
+    $$(".nav-item", nav)
       .forEach(button => {
 
         button.addEventListener(
           "click",
-          event => {
+          () => {
 
-            event.stopPropagation();
+            if (
+              button.dataset.favorites
+            ) {
 
+              state.favoritesOnly =
+                !state.favoritesOnly;
 
-            toggleFavorite(
-              button.dataset.favorite
-            );
+              state.section =
+                "all";
 
+              state.category =
+                "all";
+
+            } else {
+
+              state.section =
+                button.dataset.section ||
+                "all";
+
+              state.category =
+                "all";
+
+              state.favoritesOnly =
+                false;
+
+            }
+
+            renderNavigation();
+            renderLibrary();
+
+            $("#sidebar")
+              ?.classList.remove("open");
           }
         );
 
       });
-
   }
-
 
   /* =====================================================
-     HERO
+     CARDS
   ===================================================== */
 
-  function chooseHero() {
-
-    if (!state.items.length) {
-      return null;
-    }
-
-
-    const candidates =
-      state.items.filter(
-        item =>
-          item.logo
-      );
-
-
-    const source =
-      candidates.length
-        ? candidates
-        : state.items;
-
-
-    return source[
-      Math.floor(
-        Math.random() *
-        source.length
-      )
-    ];
-
-  }
-
-
-  function renderHero() {
-
-    const hero =
-      chooseHero();
-
-
-    state.hero =
-      hero;
-
-
-    if (!hero) {
-      return;
-    }
-
-
-    const heroImage =
-      $("#heroImage");
-
-
-    const heroTitle =
-      $("#heroTitle");
-
-
-    const heroDescription =
-      $("#heroDescription");
-
-
-    if (
-      heroImage &&
-      hero.logo
-    ) {
-
-      heroImage.style.backgroundImage =
-        `
-          url("${CSS.escape(
-            hero.logo
-          )}")
-        `;
-
-    }
-
-
-    if (heroTitle) {
-
-      heroTitle.textContent =
-        hero.title;
-
-    }
-
-
-    if (heroDescription) {
-
-      heroDescription.textContent =
-        `${hero.group} · ${state.items.length.toLocaleString(
-          "pt-BR"
-        )} conteúdos disponíveis`;
-
-    }
-
-  }
-
-
-  /* =====================================================
-     PLAYER
-  ===================================================== */
-
-  function destroyHLS() {
-
-    if (state.hls) {
-
-      try {
-
-        state.hls.destroy();
-
-      } catch {
-
-        // ignore
-
-      }
-
-      state.hls =
-        null;
-
-    }
-
-  }
-
-
-  function resetPlayer() {
-
-    destroyHLS();
-
-
-    if (!video) {
-      return;
-    }
-
-
-    video.pause();
-
-
-    video.removeAttribute(
-      "src"
-    );
-
-
-    video.load();
-
-  }
-
-
-  function setPlayerLoading(
-    visible
-  ) {
-
-    playerLoading
-      ?.classList.toggle(
-        "hidden",
-        !visible
-      );
-
-  }
-
-
-  function setPlayerError(
-    visible,
-    message = ""
-  ) {
-
-    playerError
-      ?.classList.toggle(
-        "hidden",
-        !visible
-      );
-
-
-    if (
-      message &&
-      playerErrorText
-    ) {
-
-      playerErrorText.textContent =
-        message;
-
-    }
-
-  }
-
-
-  function updatePlayerFavorite() {
-
-    const button =
-      $("#playerFavorite");
-
-
-    if (
-      !button ||
-      !state.current
-    ) {
-      return;
-    }
-
-
-    button.textContent =
-      isFavorite(
-        state.current.uid
-      )
-        ? "★"
-        : "☆";
-
-  }
-
-
-  async function playNative(
-    url
-  ) {
-
-    if (!video) {
-      return;
-    }
-
-
-    video.src =
-      url;
-
-
-    video.load();
-
-
-    try {
-
-      await video.play();
-
-    } catch {
-
-      /*
-       * Navegadores podem impedir
-       * autoplay. O usuário ainda
-       * pode apertar Play no player.
-       */
-
-    }
-
-  }
-
-
-  async function playStream(
-    item
-  ) {
-
-    resetPlayer();
-
-
-    setPlayerError(
-      false
-    );
-
-
-    setPlayerLoading(
-      true
-    );
-
-
-    const url =
-      normalizeURL(
-        item.url
-      );
-
-
-    if (!url) {
-
-      setPlayerLoading(
-        false
-      );
-
-      setPlayerError(
-        true,
-        "A playlist não forneceu uma URL válida para este conteúdo."
-      );
-
-      return;
-
-    }
-
-
-    const isHLS =
-      /\.m3u8($|\?)/i.test(
-        url
-      );
-
-
-    /*
-     * Safari/iOS possui HLS nativo.
-     */
-
-    if (
-      isHLS &&
-      video.canPlayType(
-        "application/vnd.apple.mpegurl"
-      )
-    ) {
-
-      await playNative(
-        url
-      );
-
-
-      setPlayerLoading(
-        false
-      );
-
-      return;
-
-    }
-
-
-    /*
-     * Chrome / Edge / Firefox:
-     * HLS.js quando disponível.
-     */
-
-    if (
-      isHLS &&
-      window.Hls &&
-      window.Hls.isSupported()
-    ) {
-
-      const hls =
-        new window.Hls({
-
-          enableWorker: true,
-
-          lowLatencyMode: true,
-
-          backBufferLength: 90,
-
-          maxBufferLength: 30
-
-        });
-
-
-      state.hls =
-        hls;
-
-
-      hls.on(
-        window.Hls.Events.MEDIA_ATTACHED,
-        () => {
-
-          hls.loadSource(
-            url
+  function bindCards() {
+    $$(".media-card")
+      .forEach(card => {
+
+        const uidValue =
+          card.dataset.uid;
+
+        card
+          .querySelector(
+            '[data-action="play"]'
+          )
+          ?.addEventListener(
+            "click",
+            () => {
+
+              const item =
+                state.playlist.find(
+                  x =>
+                    x.uid === uidValue
+                );
+
+              if (item) {
+                openPlayer(item);
+              }
+
+            }
           );
 
-        }
-      );
+        card
+          .querySelector(
+            '[data-action="favorite"]'
+          )
+          ?.addEventListener(
+            "click",
+            event => {
 
+              event.stopPropagation();
 
-      hls.on(
-        window.Hls.Events.MANIFEST_PARSED,
-        async () => {
+              toggleFavorite(
+                uidValue
+              );
 
-          setPlayerLoading(
-            false
+            }
           );
 
-
-          try {
-
-            await video.play();
-
-          } catch {
-
-            // autoplay bloqueado
-
-          }
-
-        }
-      );
-
-
-      hls.on(
-        window.Hls.Events.ERROR,
-        (
-          event,
-          data
-        ) => {
-
-          if (
-            data?.fatal
-          ) {
-
-            setPlayerLoading(
-              false
-            );
-
-
-            setPlayerError(
-              true,
-              "O servidor ou formato deste stream não pode ser reproduzido diretamente neste navegador."
-            );
-
-
-            try {
-
-              hls.destroy();
-
-            } catch {}
-
-          }
-
-        }
-      );
-
-
-      hls.attachMedia(
-        video
-      );
-
-
-      return;
-
-    }
-
-
-    /*
-     * Outros formatos:
-     * tenta reprodução nativa.
-     */
-
-    await playNative(
-      url
-    );
-
-
-    setPlayerLoading(
-      false
-    );
-
+      });
   }
 
-
-  function openPlayer(
-    item
-  ) {
-
-    state.current =
-      item;
-
-
-    $("#playerTitle").textContent =
-      item.title;
-
-
-    $("#playerCategory").textContent =
-      item.group;
-
-
-    updatePlayerFavorite();
-
-
-    playerModal
-      ?.classList.remove(
-        "hidden"
-      );
-
-
-    document.body.style.overflow =
-      "hidden";
-
-
-    addHistory(
-      item
-    );
-
-
-    playStream(
-      item
-    );
-
-  }
-
-
-  function closePlayer() {
-
-    resetPlayer();
-
-
-    playerModal
-      ?.classList.add(
-        "hidden"
-      );
-
-
-    document.body.style.overflow =
-      "";
-
-
-    state.current =
-      null;
-
-  }
-
-
-  /* =====================================================
-     PROCESSAR PLAYLIST
-  ===================================================== */
-
-  async function processPlaylist(
-    text,
-    playlistName
-  ) {
-
+  function toggleFavorite(uidValue) {
     if (
-      !text ||
-      !String(text).trim()
+      state.favorites.has(uidValue)
     ) {
 
-      throw new Error(
-        "A playlist está vazia."
+      state.favorites.delete(
+        uidValue
+      );
+
+    } else {
+
+      state.favorites.add(
+        uidValue
       );
 
     }
 
-
-    showLoading(
-      "Lendo sua playlist...",
-      5
-    );
-
-
-    /*
-     * Damos uma pequena folga ao navegador
-     * antes do parser de uma playlist enorme.
-     */
-
-    await sleep(
-      50
-    );
-
-
-    const items =
-      parseM3U(
-        text,
-        (
-          current,
-          total
-        ) => {
-
-          const percent =
-            Math.min(
-              65,
-              5 +
-              (
-                current /
-                total
-              ) *
-              60
-            );
-
-
-          updateLoading(
-            `Processando conteúdo ${current.toLocaleString(
-              "pt-BR"
-            )}...`,
-            percent
-          );
-
-        }
-      );
-
-
-    if (!items.length) {
-
-      throw new Error(
-        "Nenhum conteúdo M3U válido foi encontrado. Verifique se o arquivo possui entradas #EXTINF."
-      );
-
-    }
-
-
-    updateLoading(
-      "Organizando categorias...",
-      72
-    );
-
-
-    await sleep(
-      30
-    );
-
-
-    state.items =
-      items;
-
-
-    state.playlistName =
-      playlistName ||
-      "Minha playlist";
-
-
-    state.category =
-      "all";
-
-
-    state.search =
-      "";
-
-
-    state.favoritesOnly =
-      false;
-
-
-    buildCategories();
-
-
-    updateLoading(
-      "Preparando interface...",
-      90
-    );
-
-
-    await sleep(
-      120
-    );
-
-
-    renderNavigation();
-
-    renderHero();
+    saveFavorites();
 
     renderLibrary();
-
-
-    updateLoading(
-      "Tudo pronto.",
-      100
-    );
-
-
-    await sleep(
-      300
-    );
-
-
-    hideLoading();
-
-    showHome();
-
   }
 
+  function saveFavorites() {
+    try {
+      localStorage.setItem(
+        "sinal_favorites",
+        JSON.stringify(
+          [...state.favorites]
+        )
+      );
+    } catch {}
+  }
+
+  function loadFavorites() {
+    try {
+      const saved =
+        JSON.parse(
+          localStorage.getItem(
+            "sinal_favorites"
+          ) || "[]"
+        );
+
+      state.favorites =
+        new Set(saved);
+
+    } catch {
+      state.favorites =
+        new Set();
+    }
+  }
 
   /* =====================================================
-     LOADING UI
+     PLAYLIST
   ===================================================== */
 
-  function showLoading(
-    message,
-    percent
-  ) {
-
-    loadingScreen
-      ?.classList.remove(
-        "hidden"
-      );
-
-
-    updateLoading(
-      message,
-      percent
-    );
-
-  }
-
-
-  function updateLoading(
-    message,
-    percent
-  ) {
-
-    if (loadingText) {
-
-      loadingText.textContent =
-        message;
-
-    }
-
-
-    if (loadingProgress) {
-
-      loadingProgress.style.width =
-        `${percent}%`;
-
-    }
-
-  }
-
-
-  function hideLoading() {
-
-    loadingScreen
-      ?.classList.add(
-        "hidden"
-      );
-
-  }
-
-
-  function showHome() {
-
-    setupScreen
-      ?.classList.add(
-        "hidden"
-      );
-
-
-    homeScreen
-      ?.classList.remove(
-        "hidden"
-      );
-
-  }
-
-
-  function showSetup() {
-
-    closePlayer();
-
-
-    homeScreen
-      ?.classList.add(
-        "hidden"
-      );
-
-
-    setupScreen
-      ?.classList.remove(
-        "hidden"
-      );
-
-  }
-
-
-  /* =====================================================
-     FILE
-  ===================================================== */
-
-  async function handleFile(
-    file,
-    name
-  ) {
-
+  async function handleFile(file, name) {
     if (!file) {
-
-      throw new Error(
-        "Selecione um arquivo M3U."
-      );
-
-    }
-
-
-    const valid =
-      /\.(m3u8?|txt)$/i.test(
-        file.name
-      );
-
-
-    if (!valid) {
-
       throw new Error(
         "Selecione um arquivo M3U ou M3U8."
       );
-
     }
 
-
-    setSetupMessage(
-      "Lendo arquivo..."
+    showLoading(
+      "Lendo sua playlist..."
     );
-
-
-    /*
-     * text() é suportado pelos browsers
-     * modernos e evita FileReader manual.
-     */
 
     const text =
       await file.text();
 
+    const playlist =
+      parseM3U(text);
 
-    await processPlaylist(
-      text,
-      name ||
-      file.name
-    );
-
-  }
-
-
-  /* =====================================================
-     URL M3U
-  ===================================================== */
-
-  async function handleURL(
-    url,
-    name
-  ) {
-
-    url =
-      normalizeURL(
-        url
-      );
-
-
-    if (!url) {
-
+    if (!playlist.length) {
       throw new Error(
-        "Informe a URL da playlist."
+        "Não encontrei conteúdos válidos nessa playlist."
       );
-
     }
 
+    const progress =
+      $("#loadingProgress");
+
+    if (progress) {
+      progress.style.width = "75%";
+    }
+
+    await sleep(250);
+
+    state.playlist =
+      playlist;
+
+    state.section =
+      "all";
+
+    state.category =
+      "all";
+
+    state.search =
+      "";
+
+    state.favoritesOnly =
+      false;
+
+    if (search) {
+      search.value = "";
+    }
+
+    if (name) {
+      try {
+        localStorage.setItem(
+          "sinal_playlist_name",
+          name
+        );
+      } catch {}
+    }
+
+    if (progress) {
+      progress.style.width = "100%";
+    }
+
+    await sleep(300);
+
+    showHome();
+  }
+
+  async function handleURL(url, name) {
+    if (!url) {
+      throw new Error(
+        "Digite a URL da playlist."
+      );
+    }
 
     showLoading(
-      "Conectando à playlist...",
-      10
+      "Baixando playlist..."
     );
 
-
     let response;
-
 
     try {
 
       response =
-        await fetch(
-          url,
-          {
-            method: "GET",
-            cache: "no-store"
-          }
-        );
+        await fetch(url);
 
     } catch {
 
-      hideLoading();
-
-
       throw new Error(
-        "Não foi possível acessar a playlist. O servidor pode bloquear requisições do navegador (CORS)."
+        "Não foi possível acessar essa URL. O servidor pode bloquear acesso externo (CORS)."
       );
 
     }
-
 
     if (!response.ok) {
-
-      hideLoading();
-
-
       throw new Error(
-        `Servidor respondeu com HTTP ${response.status}.`
+        `Servidor respondeu com erro ${response.status}.`
       );
-
     }
-
 
     const text =
       await response.text();
 
-
-    await processPlaylist(
+    await handlePlaylistText(
       text,
-      name ||
-      "Minha playlist"
+      name
     );
-
   }
 
+  async function handlePlaylistText(text, name) {
+    const playlist =
+      parseM3U(text);
 
-  /* =====================================================
-     XTREAM
-  ===================================================== */
+    if (!playlist.length) {
+      throw new Error(
+        "A playlist não contém itens reconhecíveis."
+      );
+    }
+
+    state.playlist =
+      playlist;
+
+    state.section =
+      "all";
+
+    state.category =
+      "all";
+
+    state.search =
+      "";
+
+    state.favoritesOnly =
+      false;
+
+    if (search) {
+      search.value = "";
+    }
+
+    if (name) {
+      try {
+        localStorage.setItem(
+          "sinal_playlist_name",
+          name
+        );
+      } catch {}
+    }
+
+    await sleep(200);
+
+    showHome();
+  }
 
   async function handleXtream(
     server,
@@ -2449,161 +1030,330 @@
     name
   ) {
 
-    server =
-      normalizeURL(
-        server
-      ).replace(
-        /\/+$/,
-        ""
-      );
-
-
-    username =
-      String(
-        username || ""
-      ).trim();
-
-
-    password =
-      String(
-        password || ""
-      );
-
-
-    if (!server) {
-
+    if (
+      !server ||
+      !username ||
+      !password
+    ) {
       throw new Error(
-        "Informe o servidor."
+        "Preencha servidor, usuário e senha."
       );
-
     }
 
-
-    if (!username) {
-
-      throw new Error(
-        "Informe o usuário."
-      );
-
-    }
-
-
-    if (!password) {
-
-      throw new Error(
-        "Informe a senha."
-      );
-
-    }
-
-
-    /*
-     * Endpoint padrão Xtream Codes.
-     */
-
-    const url =
-      `${server}/get.php` +
-      `?username=${encodeURIComponent(
-        username
-      )}` +
-      `&password=${encodeURIComponent(
-        password
-      )}` +
-      `&type=m3u_plus` +
-      `&output=ts`;
-
-
-    await handleURL(
-      url,
-      name ||
-      "Minha TV"
+    showLoading(
+      "Conectando ao servidor..."
     );
 
+    const base =
+      server
+        .trim()
+        .replace(/\/+$/, "");
+
+    const url =
+      `${base}/player_api.php?username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`;
+
+    let response;
+
+    try {
+      response =
+        await fetch(url);
+
+    } catch {
+
+      throw new Error(
+        "Não foi possível conectar ao servidor Xtream. Verifique o endereço e o acesso do servidor."
+      );
+
+    }
+
+    if (!response.ok) {
+      throw new Error(
+        "O servidor Xtream não respondeu corretamente."
+      );
+    }
+
+    const data =
+      await response.json();
+
+    const items = [];
+
+    /*
+     * Canais ao vivo
+     */
+
+    if (
+      Array.isArray(
+        data.live_streams
+      )
+    ) {
+
+      data.live_streams
+        .forEach(item => {
+
+          items.push({
+            title:
+              item.name ||
+              "Canal",
+
+            group:
+              item.category_name ||
+              "Canais",
+
+            logo:
+              item.stream_icon ||
+              "",
+
+            type:
+              "channels",
+
+            url:
+              `${base}/live/${encodeURIComponent(username)}/${encodeURIComponent(password)}/${item.stream_id}.m3u8`,
+
+            uid: ""
+          });
+
+        });
+
+    }
+
+    /*
+     * Filmes
+     */
+
+    if (
+      Array.isArray(
+        data.movies
+      )
+    ) {
+
+      data.movies
+        .forEach(item => {
+
+          items.push({
+            title:
+              item.name ||
+              "Filme",
+
+            group:
+              item.category_name ||
+              "Filmes",
+
+            logo:
+              item.stream_icon ||
+              "",
+
+            type:
+              "movies",
+
+            url:
+              `${base}/movie/${encodeURIComponent(username)}/${encodeURIComponent(password)}/${item.stream_id}.${item.container_extension || "mp4"}`,
+
+            uid: ""
+          });
+
+        });
+
+    }
+
+    /*
+     * Séries
+     */
+
+    if (
+      Array.isArray(
+        data.series
+      )
+    ) {
+
+      data.series
+        .forEach(item => {
+
+          items.push({
+            title:
+              item.name ||
+              "Série",
+
+            group:
+              item.category_name ||
+              "Séries",
+
+            logo:
+              item.cover ||
+              "",
+
+            type:
+              "series",
+
+            url:
+              "",
+
+            uid: ""
+          });
+
+        });
+
+    }
+
+    items.forEach(
+      item =>
+        item.uid =
+          uid(item)
+    );
+
+    if (!items.length) {
+      throw new Error(
+        "O servidor não retornou conteúdos."
+      );
+    }
+
+    state.playlist =
+      items;
+
+    if (name) {
+      try {
+        localStorage.setItem(
+          "sinal_playlist_name",
+          name
+        );
+      } catch {}
+    }
+
+    showHome();
   }
 
+  /* =====================================================
+     HOME
+  ===================================================== */
+
+  function showHome() {
+    hideLoading();
+
+    setupScreen?.classList.add(
+      "hidden"
+    );
+
+    homeScreen?.classList.remove(
+      "hidden"
+    );
+
+    renderNavigation();
+    renderLibrary();
+
+    setupHeroContent();
+  }
+
+  function setupHeroContent() {
+    if (!state.playlist.length) {
+      return;
+    }
+
+    const candidates =
+      state.playlist.filter(
+        item =>
+          item.type === "movies" ||
+          item.type === "series"
+      );
+
+    state.hero =
+      candidates[0] ||
+      state.playlist[0];
+
+    const title =
+      $("#heroTitle");
+
+    const description =
+      $("#heroDescription");
+
+    const backdrop =
+      $("#heroBackdrop");
+
+    if (title) {
+      title.textContent =
+        state.hero.title;
+    }
+
+    if (description) {
+      description.textContent =
+        state.hero.group ||
+        "Disponível na sua biblioteca";
+    }
+
+    if (
+      backdrop &&
+      state.hero.logo
+    ) {
+      backdrop.style.backgroundImage =
+        `url("${state.hero.logo}")`;
+    }
+  }
 
   /* =====================================================
      TABS
   ===================================================== */
 
   function setupTabs() {
+    const tabs =
+      $$(".source-tab");
 
-    $$(".source-tab")
-      .forEach(tab => {
+    const panels = {
+      file: $("#filePanel"),
+      url: $("#urlPanel"),
+      xtream: $("#xtreamPanel")
+    };
 
-        tab.addEventListener(
-          "click",
-          () => {
+    tabs.forEach(tab => {
 
-            $$(".source-tab")
-              .forEach(
-                button =>
-                  button.classList.remove(
-                    "active"
-                  )
-              );
+      tab.addEventListener(
+        "click",
+        () => {
 
+          const target =
+            tab.dataset.tab;
 
-            $$(".source-panel")
-              .forEach(
-                panel =>
-                  panel.classList.remove(
-                    "active"
-                  )
-              );
+          tabs.forEach(t =>
+            t.classList.remove(
+              "active"
+            )
+          );
 
+          tab.classList.add(
+            "active"
+          );
 
-            tab.classList.add(
+          Object.values(panels)
+            .forEach(panel =>
+              panel?.classList.remove(
+                "active"
+              )
+            );
+
+          panels[target]
+            ?.classList.add(
               "active"
             );
 
+          setSetupMessage("");
+        }
+      );
 
-            const panel =
-              $(
-                `#${tab.dataset.tab}Panel`
-              );
-
-
-            panel
-              ?.classList.add(
-                "active"
-              );
-
-
-            setSetupMessage(
-              ""
-            );
-
-          }
-        );
-
-      });
-
+    });
   }
 
-
   /* =====================================================
-     FILE INPUT
+     UPLOAD
   ===================================================== */
 
   function setupFileInput() {
-
     const input =
       $("#playlistFile");
-
 
     const zone =
       $("#uploadZone");
 
-
     const label =
       $("#selectedFile");
 
-
-    if (!input) {
-      return;
-    }
-
+    if (!input) return;
 
     input.addEventListener(
       "change",
@@ -2612,72 +1362,61 @@
         const file =
           input.files?.[0];
 
-
         if (label) {
-
           label.textContent =
             file
               ? file.name
               : "M3U / M3U8";
-
         }
 
       }
     );
 
-
-    if (!zone) {
-      return;
-    }
-
+    if (!zone) return;
 
     [
       "dragenter",
       "dragover"
-    ]
-      .forEach(
-        eventName => {
+    ].forEach(
+      eventName => {
 
-          zone.addEventListener(
-            eventName,
-            event => {
+        zone.addEventListener(
+          eventName,
+          event => {
 
-              event.preventDefault();
+            event.preventDefault();
 
-              zone.classList.add(
-                "dragover"
-              );
+            zone.classList.add(
+              "dragover"
+            );
 
-            }
-          );
+          }
+        );
 
-        }
-      );
-
+      }
+    );
 
     [
       "dragleave",
       "drop"
-    ]
-      .forEach(
-        eventName => {
+    ].forEach(
+      eventName => {
 
-          zone.addEventListener(
-            eventName,
-            event => {
+        zone.addEventListener(
+          eventName,
+          event => {
 
-              event.preventDefault();
+            event.preventDefault();
 
-              zone.classList.remove(
-                "dragover"
-              );
+            zone.classList.remove(
+              "dragover"
+            );
 
-            }
-          );
+          }
+        );
 
-        }
-      );
-
+      }
+    );
 
     zone.addEventListener(
       "drop",
@@ -2687,40 +1426,26 @@
           event.dataTransfer
             ?.files?.[0];
 
-
-        if (!file) {
-          return;
-        }
-
+        if (!file) return;
 
         try {
 
           const transfer =
             new DataTransfer();
 
-
           transfer.items.add(
             file
           );
 
-
           input.files =
             transfer.files;
 
-
           if (label) {
-
             label.textContent =
               file.name;
-
           }
 
         } catch {
-
-          /*
-           * Alguns navegadores não permitem
-           * alterar input.files programaticamente.
-           */
 
           showToast(
             "Clique na área e selecione o arquivo manualmente."
@@ -2730,9 +1455,7 @@
 
       }
     );
-
   }
-
 
   /* =====================================================
      FORMULÁRIOS
@@ -2747,19 +1470,16 @@
 
           event.preventDefault();
 
-
           try {
 
             const file =
               $("#playlistFile")
                 ?.files?.[0];
 
-
             const name =
               $("#playlistName")
                 ?.value
                 .trim();
-
 
             await handleFile(
               file,
@@ -2770,11 +1490,9 @@
 
             hideLoading();
 
-
             setSetupMessage(
               error.message
             );
-
 
             showToast(
               error.message
@@ -2785,7 +1503,6 @@
         }
       );
 
-
     $("#urlPanel")
       ?.addEventListener(
         "submit",
@@ -2793,19 +1510,17 @@
 
           event.preventDefault();
 
-
           try {
 
             const url =
               $("#playlistUrl")
-                ?.value;
-
+                ?.value
+                .trim();
 
             const name =
               $("#urlPlaylistName")
                 ?.value
                 .trim();
-
 
             await handleURL(
               url,
@@ -2816,11 +1531,9 @@
 
             hideLoading();
 
-
             setSetupMessage(
               error.message
             );
-
 
             showToast(
               error.message
@@ -2831,7 +1544,6 @@
         }
       );
 
-
     $("#xtreamPanel")
       ?.addEventListener(
         "submit",
@@ -2839,16 +1551,17 @@
 
           event.preventDefault();
 
-
           try {
 
             await handleXtream(
 
               $("#xtreamServer")
-                ?.value,
+                ?.value
+                .trim(),
 
               $("#xtreamUsername")
-                ?.value,
+                ?.value
+                .trim(),
 
               $("#xtreamPassword")
                 ?.value,
@@ -2863,11 +1576,9 @@
 
             hideLoading();
 
-
             setSetupMessage(
               error.message
             );
-
 
             showToast(
               error.message
@@ -2877,50 +1588,54 @@
 
         }
       );
-
   }
 
-
   /* =====================================================
-     BUSCA
-  ===================================================== */
+     PESQUISA
+     ===================================================== */
 
   function setupSearch() {
-
-    if (!search) {
-      return;
-    }
-
+    if (!search) return;
 
     search.addEventListener(
       "input",
-      () => {
+      event => {
 
         state.search =
-          search.value;
+          event.target.value;
 
-
-        state.category =
-          "all";
-
-
-        state.favoritesOnly =
-          false;
-
-
-        renderNavigation();
+        /*
+         * A pesquisa não muda o visual
+         * nem a página. Apenas filtra.
+         */
 
         renderLibrary();
 
       }
     );
 
-  }
+    search.addEventListener(
+      "keydown",
+      event => {
 
+        if (
+          event.key === "Escape"
+        ) {
+
+          search.value = "";
+          state.search = "";
+
+          renderLibrary();
+
+        }
+
+      }
+    );
+  }
 
   /* =====================================================
      FAVORITOS
-  ===================================================== */
+     ===================================================== */
 
   function setupFavorites() {
 
@@ -2932,40 +1647,22 @@
           state.favoritesOnly =
             !state.favoritesOnly;
 
+          state.search = "";
 
-          state.category =
-            "all";
-
-
-          if (!state.favoritesOnly) {
-
-            state.search =
-              "";
-
-
-            if (search) {
-
-              search.value =
-                "";
-
-            }
-
+          if (search) {
+            search.value = "";
           }
 
-
           renderNavigation();
-
           renderLibrary();
 
         }
       );
-
   }
 
-
   /* =====================================================
-     MOBILE MENU
-  ===================================================== */
+     MOBILE
+     ===================================================== */
 
   function setupMobileMenu() {
 
@@ -2981,13 +1678,183 @@
 
         }
       );
-
   }
 
-
   /* =====================================================
-     PLAYER CONTROLS
-  ===================================================== */
+     PLAYER
+     ===================================================== */
+
+  function openPlayer(item) {
+    state.current = item;
+
+    if (!playerModal) {
+      playStream(item);
+      return;
+    }
+
+    playerModal.classList.remove(
+      "hidden"
+    );
+
+    const title =
+      $("#playerTitle");
+
+    if (title) {
+      title.textContent =
+        item.title;
+    }
+
+    const favorite =
+      $("#playerFavorite");
+
+    if (favorite) {
+      favorite.textContent =
+        state.favorites.has(item.uid)
+          ? "★"
+          : "☆";
+    }
+
+    playStream(item);
+  }
+
+  function closePlayer() {
+    try {
+      if (state.hls) {
+        state.hls.destroy();
+        state.hls = null;
+      }
+    } catch {}
+
+    if (video) {
+      video.pause();
+      video.removeAttribute("src");
+      video.load();
+    }
+
+    playerModal?.classList.add(
+      "hidden"
+    );
+
+    state.current = null;
+  }
+
+  function setPlayerLoading(value) {
+    const loader =
+      $("#playerLoading");
+
+    loader?.classList.toggle(
+      "hidden",
+      !value
+    );
+  }
+
+  function setPlayerError(
+    value,
+    message = ""
+  ) {
+    const error =
+      $("#playerError");
+
+    if (!error) return;
+
+    error.classList.toggle(
+      "hidden",
+      !value
+    );
+
+    if (message) {
+      error.textContent =
+        message;
+    }
+  }
+
+  function playStream(item) {
+    if (!item?.url) {
+      setPlayerError(
+        true,
+        "Este conteúdo não possui uma URL de reprodução disponível."
+      );
+      return;
+    }
+
+    if (!video) {
+      window.open(
+        item.url,
+        "_blank",
+        "noopener"
+      );
+      return;
+    }
+
+    setPlayerLoading(true);
+    setPlayerError(false);
+
+    try {
+      if (state.hls) {
+        state.hls.destroy();
+        state.hls = null;
+      }
+    } catch {}
+
+    const isHLS =
+      /\.m3u8($|\?)/i.test(
+        item.url
+      );
+
+    if (
+      isHLS &&
+      window.Hls &&
+      Hls.isSupported()
+    ) {
+
+      state.hls =
+        new Hls();
+
+      state.hls.loadSource(
+        item.url
+      );
+
+      state.hls.attachMedia(
+        video
+      );
+
+      state.hls.on(
+        Hls.Events.MANIFEST_PARSED,
+        () => {
+
+          video.play()
+            .catch(() => {});
+
+        }
+      );
+
+      state.hls.on(
+        Hls.Events.ERROR,
+        (_, data) => {
+
+          if (
+            data?.fatal
+          ) {
+
+            setPlayerError(
+              true,
+              "Não foi possível reproduzir este stream."
+            );
+
+          }
+
+        }
+      );
+
+      return;
+    }
+
+    video.src =
+      item.url;
+
+    video.play()
+      .catch(() => {});
+  }
 
   function setupPlayer() {
 
@@ -2996,7 +1863,6 @@
         "click",
         closePlayer
       );
-
 
     playerModal
       ?.addEventListener(
@@ -3007,14 +1873,11 @@
             event.target ===
             playerModal
           ) {
-
             closePlayer();
-
           }
 
         }
       );
-
 
     $("#playerFavorite")
       ?.addEventListener(
@@ -3029,11 +1892,22 @@
               state.current.uid
             );
 
+            const button =
+              $("#playerFavorite");
+
+            if (button) {
+              button.textContent =
+                state.favorites.has(
+                  state.current.uid
+                )
+                  ? "★"
+                  : "☆";
+            }
+
           }
 
         }
       );
-
 
     $("#retryPlayer")
       ?.addEventListener(
@@ -3043,69 +1917,45 @@
           if (
             state.current
           ) {
-
             playStream(
               state.current
             );
-
           }
 
         }
       );
 
-
     video
       ?.addEventListener(
         "waiting",
-        () => {
-
-          setPlayerLoading(
-            true
-          );
-
-        }
+        () =>
+          setPlayerLoading(true)
       );
-
 
     video
       ?.addEventListener(
         "playing",
         () => {
 
-          setPlayerLoading(
-            false
-          );
-
-          setPlayerError(
-            false
-          );
+          setPlayerLoading(false);
+          setPlayerError(false);
 
         }
       );
-
 
     video
       ?.addEventListener(
         "canplay",
-        () => {
-
-          setPlayerLoading(
-            false
-          );
-
-        }
+        () =>
+          setPlayerLoading(false)
       );
-
 
     video
       ?.addEventListener(
         "error",
         () => {
 
-          setPlayerLoading(
-            false
-          );
-
+          setPlayerLoading(false);
 
           setPlayerError(
             true,
@@ -3114,13 +1964,11 @@
 
         }
       );
-
   }
 
-
   /* =====================================================
-     HERO BUTTONS
-  ===================================================== */
+     HERO
+     ===================================================== */
 
   function setupHero() {
 
@@ -3129,28 +1977,21 @@
         "click",
         () => {
 
-          if (
-            state.hero
-          ) {
-
+          if (state.hero) {
             openPlayer(
               state.hero
             );
-
           }
 
         }
       );
-
 
     $("#heroInfo")
       ?.addEventListener(
         "click",
         () => {
 
-          if (
-            state.hero
-          ) {
+          if (state.hero) {
 
             showToast(
               `${state.hero.title} · ${state.hero.group}`
@@ -3160,13 +2001,11 @@
 
         }
       );
-
   }
-
 
   /* =====================================================
      TROCAR PLAYLIST
-  ===================================================== */
+     ===================================================== */
 
   function setupChangePlaylist() {
 
@@ -3175,13 +2014,9 @@
 
         showSetup();
 
-
-        setSetupMessage(
-          ""
-        );
+        setSetupMessage("");
 
       };
-
 
     $("#changePlaylist")
       ?.addEventListener(
@@ -3189,19 +2024,16 @@
         handler
       );
 
-
     $("#sidebarChange")
       ?.addEventListener(
         "click",
         handler
       );
-
   }
-
 
   /* =====================================================
      TECLADO
-  ===================================================== */
+     ===================================================== */
 
   function setupKeyboard() {
 
@@ -3225,81 +2057,52 @@
 
       }
     );
-
   }
-
 
   /* =====================================================
      SPLASH
-  ===================================================== */
+     ===================================================== */
 
   async function startSplash() {
 
-    await sleep(
-      900
+    await sleep(900);
+
+    splash?.classList.add(
+      "hide"
     );
 
+    await sleep(500);
 
-    splash
-      ?.classList.add(
-        "hide"
-      );
-
-
-    await sleep(
-      500
+    splash?.classList.add(
+      "hidden"
     );
 
-
-    splash
-      ?.classList.add(
-        "hidden"
-      );
-
-
-    setupScreen
-      ?.classList.remove(
-        "hidden"
-      );
-
+    setupScreen?.classList.remove(
+      "hidden"
+    );
   }
-
 
   /* =====================================================
      INIT
-  ===================================================== */
+     ===================================================== */
 
   function init() {
 
+    loadFavorites();
+
     setupTabs();
-
     setupFileInput();
-
     setupForms();
-
     setupSearch();
-
     setupFavorites();
-
     setupMobileMenu();
-
     setupPlayer();
-
     setupHero();
-
     setupChangePlaylist();
-
     setupKeyboard();
 
-
     startSplash();
-
   }
-
-
-  /*
-   * Espera o DOM.
-   */
 
   if (
     document.readyState ===
@@ -3309,9 +2112,7 @@
     document.addEventListener(
       "DOMContentLoaded",
       init,
-      {
-        once: true
-      }
+      { once: true }
     );
 
   } else {
