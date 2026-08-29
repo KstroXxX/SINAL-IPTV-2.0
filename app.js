@@ -4,48 +4,47 @@
 
 
   /* =====================================================
-     HELPERS
+     SINAL IPTV
+     Playlist M3U -> Parser -> Biblioteca -> Player
   ===================================================== */
 
-  const $ = (
-    selector,
-    root = document
-  ) => root.querySelector(selector);
+
+  const $ = (selector, root = document) =>
+    root.querySelector(selector);
 
 
-  const $$ = (
-    selector,
-    root = document
-  ) => [...root.querySelectorAll(selector)];
+  const $$ = (selector, root = document) =>
+    [...root.querySelectorAll(selector)];
 
 
-  const STORAGE_KEY =
-    "sinal_iptv_v1";
+  const STORAGE = {
+    favorites: "sinal_favorites_v2",
+    history: "sinal_history_v2",
+    settings: "sinal_settings_v2"
+  };
 
-
-  const FAVORITES_KEY =
-    "sinal_iptv_favorites";
-
-
-  /* =====================================================
-     ESTADO
-  ===================================================== */
 
   const state = {
 
     items: [],
 
-    filtered: [],
+    categories: [],
 
     category: "all",
 
+    search: "",
+
     favoritesOnly: false,
 
-    playlistName: "",
+    current: null,
 
-    visible: 80,
+    hero: null,
 
-    current: null
+    hls: null,
+
+    visiblePerRow: 40,
+
+    playlistName: "Minha playlist"
 
   };
 
@@ -54,85 +53,155 @@
      ELEMENTOS
   ===================================================== */
 
-  const setupView =
-    $("#setupView");
+  const splash =
+    $("#splash");
 
-  const homeView =
-    $("#homeView");
+  const setupScreen =
+    $("#setupScreen");
 
-  const setupStatus =
-    $("#setupStatus");
+  const loadingScreen =
+    $("#loadingScreen");
 
-  const mediaGrid =
-    $("#mediaGrid");
+  const homeScreen =
+    $("#homeScreen");
 
-  const emptyState =
-    $("#emptyState");
+  const loadingText =
+    $("#loadingText");
 
-  const resultCount =
-    $("#resultCount");
+  const loadingProgress =
+    $("#loadingProgress");
 
-  const sectionTitle =
-    $("#sectionTitle");
+  const setupMessage =
+    $("#setupMessage");
 
-  const categoryNav =
-    $("#categoryNav");
+  const library =
+    $("#library");
+
+  const navigation =
+    $("#navigation");
+
+  const search =
+    $("#search");
+
+  const toast =
+    $("#toast");
 
   const playerModal =
     $("#playerModal");
 
   const video =
-    $("#videoPlayer");
+    $("#video");
 
-  const videoFallback =
-    $("#videoFallback");
+  const playerLoading =
+    $("#playerLoading");
 
-  const toast =
-    $("#toast");
+  const playerError =
+    $("#playerError");
+
+  const playerErrorText =
+    $("#playerErrorText");
 
 
   /* =====================================================
-     HTML SEGURO
+     UTILITÁRIOS
   ===================================================== */
 
-  function escapeHtml(value = "") {
+  function sleep(ms) {
 
-    return String(value)
-      .replace(/[&<>"']/g, char => ({
-
-        "&": "&amp;",
-
-        "<": "&lt;",
-
-        ">": "&gt;",
-
-        '"': "&quot;",
-
-        "'": "&#039;"
-
-      }[char]));
+    return new Promise(
+      resolve => setTimeout(
+        resolve,
+        ms
+      )
+    );
 
   }
 
 
-  /* =====================================================
-     TOAST
-  ===================================================== */
+  function escapeHTML(value) {
+
+    return String(value ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#039;");
+
+  }
+
+
+  function normalizeURL(value) {
+
+    return String(value ?? "")
+      .trim()
+      .replace(/^['"]|['"]$/g, "");
+
+  }
+
+
+  function slug(value) {
+
+    return String(value ?? "")
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-|-$/g, "");
+
+  }
+
+
+  function hash(value) {
+
+    let h = 2166136261;
+
+
+    const text =
+      String(value ?? "");
+
+
+    for (
+      let i = 0;
+      i < text.length;
+      i++
+    ) {
+
+      h ^= text.charCodeAt(i);
+
+      h =
+        Math.imul(
+          h,
+          16777619
+        );
+
+    }
+
+
+    return (
+      h >>> 0
+    ).toString(36);
+
+  }
+
 
   function showToast(message) {
 
     if (!toast) return;
 
+
     toast.textContent =
       message;
+
 
     toast.classList.add(
       "show"
     );
 
+
     clearTimeout(
       showToast.timer
     );
+
 
     showToast.timer =
       setTimeout(() => {
@@ -141,67 +210,85 @@
           "show"
         );
 
-      }, 2800);
+      }, 3000);
+
+  }
+
+
+  function setSetupMessage(
+    message
+  ) {
+
+    if (!setupMessage) {
+      return;
+    }
+
+
+    setupMessage.textContent =
+      message;
+
   }
 
 
   /* =====================================================
-     LOCAL STORAGE
+     STORAGE
   ===================================================== */
 
-  function getSavedConfig() {
+  function readJSON(
+    key,
+    fallback
+  ) {
 
     try {
 
-      return JSON.parse(
+      const value =
         localStorage.getItem(
-          STORAGE_KEY
-        ) || "null"
-      );
+          key
+        );
+
+
+      return value
+        ? JSON.parse(value)
+        : fallback;
 
     } catch {
 
-      return null;
+      return fallback;
 
     }
+
   }
 
 
-  function saveConfig(config) {
+  function writeJSON(
+    key,
+    value
+  ) {
 
     try {
 
       localStorage.setItem(
-        STORAGE_KEY,
-        JSON.stringify(config)
+        key,
+        JSON.stringify(value)
       );
 
-    } catch (error) {
+    } catch {
 
-      console.warn(
-        "Não foi possível salvar a configuração.",
-        error
-      );
+      // O site continua funcionando
+      // mesmo se o storage estiver indisponível.
 
     }
+
   }
 
 
   function getFavorites() {
 
-    try {
+    return readJSON(
+      STORAGE.favorites,
+      []
+    );
 
-      return JSON.parse(
-        localStorage.getItem(
-          FAVORITES_KEY
-        ) || "[]"
-      );
-
-    } catch {
-
-      return [];
-
-    }
   }
 
 
@@ -217,6 +304,7 @@
 
     const favorites =
       getFavorites();
+
 
     const index =
       favorites.indexOf(id);
@@ -236,114 +324,151 @@
     }
 
 
-    localStorage.setItem(
-      FAVORITES_KEY,
-      JSON.stringify(favorites)
+    writeJSON(
+      STORAGE.favorites,
+      favorites
     );
 
 
-    render();
-  }
+    renderLibrary();
+
+    renderNavigation();
 
 
-  /* =====================================================
-     ID ÚNICO
-  ===================================================== */
-
-  function createId(
-    item,
-    index
-  ) {
-
-    const value = [
-      item.title,
-      item.url,
-      item.group,
-      index
-    ].join("|");
-
-
-    let hash = 0;
-
-
-    for (
-      let i = 0;
-      i < value.length;
-      i++
+    if (
+      state.current &&
+      state.current.uid === id
     ) {
 
-      hash =
-        ((hash << 5) -
-          hash) +
-        value.charCodeAt(i);
+      updatePlayerFavorite();
 
-      hash |= 0;
     }
 
-
-    return `sinal-${Math.abs(hash)}`;
-
   }
 
 
-  /* =====================================================
-     NORMALIZAR URL
-  ===================================================== */
+  function addHistory(item) {
 
-  function normalizeUrl(url) {
-
-    return String(url || "")
-      .trim()
-      .replace(
-        /^['"]|['"]$/g,
-        ""
+    const history =
+      readJSON(
+        STORAGE.history,
+        []
       );
 
+
+    const clean =
+      history.filter(
+        entry =>
+          entry.uid !== item.uid
+      );
+
+
+    clean.unshift({
+
+      uid: item.uid,
+
+      title: item.title,
+
+      group: item.group,
+
+      logo: item.logo,
+
+      url: item.url,
+
+      timestamp:
+        Date.now()
+
+    });
+
+
+    writeJSON(
+      STORAGE.history,
+      clean.slice(0, 50)
+    );
+
+  }
+
+
+  function getHistory() {
+
+    return readJSON(
+      STORAGE.history,
+      []
+    );
+
   }
 
 
   /* =====================================================
-     PARSE EXTINF
+     PARSER M3U
   ===================================================== */
 
-  function parseExtInf(line) {
+  function parseAttributes(
+    line
+  ) {
 
     const attributes = {};
 
     const regex =
-      /([A-Za-z0-9_-]+)="([^"]*)"/g;
+      /([A-Za-z0-9_-]+)\s*=\s*"([^"]*)"/g;
 
     let match;
 
 
     while (
       (match = regex.exec(line))
-      !== null
     ) {
 
       attributes[
         match[1].toLowerCase()
-      ] = match[2];
+      ] =
+        match[2].trim();
 
     }
 
+
+    return attributes;
+
+  }
+
+
+  function parseExtInf(
+    line
+  ) {
 
     const comma =
       line.indexOf(",");
 
 
+    const metadata =
+      comma >= 0
+        ? line.slice(
+            0,
+            comma
+          )
+        : line;
+
+
     const title =
       comma >= 0
-        ? line
-            .slice(comma + 1)
-            .trim()
+        ? line.slice(
+            comma + 1
+          ).trim()
         : "Sem título";
+
+
+    const attributes =
+      parseAttributes(
+        metadata
+      );
 
 
     return {
 
       title:
-        title || "Sem título",
+        title ||
+        attributes["tvg-name"] ||
+        "Sem título",
 
       group:
         attributes["group-title"] ||
@@ -355,7 +480,7 @@
         attributes["logo"] ||
         "",
 
-      id:
+      tvgId:
         attributes["tvg-id"] ||
         "",
 
@@ -365,6 +490,10 @@
 
       language:
         attributes["tvg-language"] ||
+        "",
+
+      radio:
+        attributes["radio"] ||
         ""
 
     };
@@ -372,21 +501,22 @@
   }
 
 
-  /* =====================================================
-     PARSER M3U
-  ===================================================== */
-
-  function parseM3U(text) {
+  function parseM3U(
+    text,
+    progressCallback
+  ) {
 
     const lines =
-      String(text || "")
+      String(text ?? "")
         .replace(/^\uFEFF/, "")
         .split(/\r?\n/);
 
 
-    const items = [];
+    const result = [];
 
     let metadata = null;
+
+    let processed = 0;
 
 
     for (
@@ -395,8 +525,12 @@
       i++
     ) {
 
+      const raw =
+        lines[i];
+
+
       const line =
-        lines[i].trim();
+        raw.trim();
 
 
       if (!line) {
@@ -411,12 +545,45 @@
       ) {
 
         metadata =
-          parseExtInf(line);
+          parseExtInf(
+            line
+          );
 
         continue;
 
       }
 
+
+      /*
+       * Algumas playlists utilizam
+       * #EXTGRP antes da URL.
+       */
+
+      if (
+        line.startsWith(
+          "#EXTGRP:"
+        )
+      ) {
+
+        if (metadata) {
+
+          metadata.group =
+            line
+              .slice(7)
+              .trim() ||
+            metadata.group;
+
+        }
+
+        continue;
+
+      }
+
+
+      /*
+       * Linhas que não começam com #
+       * podem representar URLs de stream.
+       */
 
       if (
         !line.startsWith("#") &&
@@ -424,28 +591,55 @@
       ) {
 
         const url =
-          normalizeUrl(line);
+          normalizeURL(
+            line
+          );
 
 
         if (url) {
 
-          const item = {
-
-            ...metadata,
-
-            url
-
-          };
+          const base =
+            metadata;
 
 
-          item.uid =
-            createId(
-              item,
-              items.length
+          const uid =
+            hash(
+              [
+                base.title,
+                base.group,
+                base.logo,
+                url,
+                result.length
+              ].join("|")
             );
 
 
-          items.push(item);
+          result.push({
+
+            uid,
+
+            title:
+              base.title,
+
+            group:
+              base.group ||
+              "Outros",
+
+            logo:
+              base.logo,
+
+            tvgId:
+              base.tvgId,
+
+            country:
+              base.country,
+
+            language:
+              base.language,
+
+            url
+
+          });
 
         }
 
@@ -454,10 +648,26 @@
 
       }
 
+
+      processed++;
+
+
+      if (
+        progressCallback &&
+        processed % 5000 === 0
+      ) {
+
+        progressCallback(
+          processed,
+          lines.length
+        );
+
+      }
+
     }
 
 
-    return items;
+    return result;
 
   }
 
@@ -466,88 +676,98 @@
      CATEGORIAS
   ===================================================== */
 
-  function getCategories() {
+  function buildCategories() {
 
-    const counts =
+    const map =
       new Map();
 
 
-    state.items.forEach(
-      item => {
+    for (
+      const item of state.items
+    ) {
 
-        const category =
+      const category =
+        String(
           item.group ||
-          "Outros";
+          "Outros"
+        ).trim() ||
+        "Outros";
 
 
-        counts.set(
-          category,
-          (counts.get(category) || 0) + 1
-        );
-
-      }
-    );
-
-
-    return [
-      ...counts.entries()
-    ]
-      .sort(
-        (a, b) =>
-          b[1] - a[1]
+      map.set(
+        category,
+        (map.get(category) || 0) + 1
       );
+
+    }
+
+
+    state.categories =
+      [...map.entries()]
+        .sort(
+          (a, b) =>
+            b[1] - a[1]
+        );
 
   }
 
 
   function categoryIcon(
-    category
+    name
   ) {
 
-    const name =
-      String(category)
+    const value =
+      String(name)
         .toLowerCase();
 
 
     if (
-      name.includes("filme") ||
-      name.includes("movie")
+      value.includes("filme") ||
+      value.includes("movie")
     ) {
-      return "◈";
+      return "◆";
     }
 
 
     if (
-      name.includes("série") ||
-      name.includes("serie") ||
-      name.includes("series")
+      value.includes("serie") ||
+      value.includes("série")
     ) {
       return "▣";
     }
 
 
     if (
-      name.includes("esporte") ||
-      name.includes("sport")
+      value.includes("sport") ||
+      value.includes("esporte") ||
+      value.includes("futebol")
     ) {
       return "◉";
     }
 
 
     if (
-      name.includes("infantil") ||
-      name.includes("kids")
+      value.includes("kids") ||
+      value.includes("infantil") ||
+      value.includes("child")
     ) {
       return "✦";
     }
 
 
     if (
-      name.includes("notícia") ||
-      name.includes("noticia") ||
-      name.includes("news")
+      value.includes("news") ||
+      value.includes("noticia") ||
+      value.includes("notícia")
     ) {
       return "◌";
+    }
+
+
+    if (
+      value.includes("document")
+    ) {
+      return "◇";
     }
 
 
@@ -562,91 +782,115 @@
 
   function renderNavigation() {
 
-    if (!categoryNav) {
+    if (!navigation) {
       return;
     }
 
 
-    const categories =
-      getCategories();
+    const favoritesCount =
+      state.items.filter(
+        item =>
+          isFavorite(
+            item.uid
+          )
+      ).length;
 
 
-    categoryNav.innerHTML = `
+    let html = `
 
       <button
+        type="button"
+        data-category="all"
         class="${
           state.category === "all" &&
           !state.favoritesOnly
             ? "active"
             : ""
         }"
-        data-category="all"
       >
-        ⌂ &nbsp; Início
+
+        <span>⌂</span>
+
+        Início
+
       </button>
 
 
       <button
+        type="button"
+        data-favorites="true"
         class="${
           state.favoritesOnly
             ? "active"
             : ""
         }"
-        data-favorites="true"
       >
-        ☆ &nbsp; Favoritos
+
+        <span>☆</span>
+
+        Favoritos
+
+        <span class="count">
+          ${favoritesCount}
+        </span>
+
       </button>
-
-
-      ${categories
-        .map(
-          ([category, count]) => `
-
-          <button
-            class="${
-              state.category === category &&
-              !state.favoritesOnly
-                ? "active"
-                : ""
-            }"
-            data-category="${escapeHtml(
-              category
-            )}"
-          >
-
-            ${categoryIcon(
-              category
-            )}
-
-            &nbsp;
-
-            ${escapeHtml(
-              category
-            )}
-
-            <span
-              style="
-                float:right;
-                opacity:.45;
-              "
-            >
-              ${count.toLocaleString(
-                "pt-BR"
-              )}
-            </span>
-
-          </button>
-
-        `
-        )
-        .join("")}
 
     `;
 
 
+    for (
+      const [
+        category,
+        count
+      ] of state.categories
+    ) {
+
+      html += `
+
+        <button
+          type="button"
+          data-category="${escapeHTML(
+            category
+          )}"
+          class="${
+            state.category === category &&
+            !state.favoritesOnly
+              ? "active"
+              : ""
+          }"
+        >
+
+          <span>
+            ${categoryIcon(
+              category
+            )}
+          </span>
+
+          ${escapeHTML(
+            category
+          )}
+
+          <span class="count">
+            ${count.toLocaleString(
+              "pt-BR"
+            )}
+          </span>
+
+        </button>
+
+      `;
+
+    }
+
+
+    navigation.innerHTML =
+      html;
+
+
     $$(
       "button",
-      categoryNav
+      navigation
     ).forEach(button => {
 
       button.addEventListener(
@@ -671,28 +915,19 @@
             state.category =
               button.dataset.category ||
               "all";
+
           }
-
-
-          state.visible = 80;
 
 
           renderNavigation();
 
-          render();
+          renderLibrary();
 
 
-          const sidebar =
-            $("#sidebar");
-
-
-          if (sidebar) {
-
-            sidebar.classList.remove(
+          $("#sidebar")
+            ?.classList.remove(
               "open"
             );
-
-          }
 
         }
       );
@@ -703,64 +938,177 @@
 
 
   /* =====================================================
-     FILTROS
+     DETECÇÃO DE TIPO
   ===================================================== */
 
-  function applyFilters() {
+  function detectType(item) {
 
-    const search =
-      $("#searchInput");
-
-
-    const query =
-      search
-        ? search.value
-            .trim()
-            .toLowerCase()
-        : "";
+    const url =
+      String(
+        item.url || ""
+      ).toLowerCase();
 
 
-    state.filtered =
-      state.items.filter(
-        item => {
+    if (
+      url.includes(".m3u8") ||
+      url.includes("m3u8?")
+    ) {
 
-          const categoryOK =
-            state.category === "all" ||
+      return "hls";
+
+    }
+
+
+    if (
+      url.includes(".mp4") ||
+      url.includes(".webm") ||
+      url.includes(".ogg")
+    ) {
+
+      return "video";
+
+    }
+
+
+    return "stream";
+
+  }
+
+
+  /* =====================================================
+     FILTRO
+  ===================================================== */
+
+  function getFilteredItems() {
+
+    let items =
+      state.items;
+
+
+    if (
+      state.category !== "all"
+    ) {
+
+      items =
+        items.filter(
+          item =>
             item.group ===
-              state.category;
+            state.category
+        );
+
+    }
 
 
-          const favoriteOK =
-            !state.favoritesOnly ||
+    if (
+      state.favoritesOnly
+    ) {
+
+      items =
+        items.filter(
+          item =>
             isFavorite(
               item.uid
+            )
+        );
+
+    }
+
+
+    if (
+      state.search
+    ) {
+
+      const query =
+        state.search
+          .toLowerCase()
+          .trim();
+
+
+      items =
+        items.filter(
+          item => {
+
+            const text =
+              [
+                item.title,
+                item.group,
+                item.country,
+                item.language,
+                item.tvgId
+              ]
+                .join(" ")
+                .toLowerCase();
+
+
+            return text.includes(
+              query
             );
 
+          }
+        );
 
-          const text =
-            [
-              item.title,
-              item.group,
-              item.country,
-              item.language
-            ]
-              .join(" ")
-              .toLowerCase();
+    }
 
 
-          const searchOK =
-            !query ||
-            text.includes(query);
+    return items;
+
+  }
 
 
-          return (
-            categoryOK &&
-            favoriteOK &&
-            searchOK
-          );
+  /* =====================================================
+     POSTER
+  ===================================================== */
 
-        }
+  function posterHTML(item) {
+
+    const logo =
+      normalizeURL(
+        item.logo
       );
+
+
+    const image =
+      logo
+
+        ? `
+
+          <img
+            src="${escapeHTML(
+              logo
+            )}"
+            alt=""
+            loading="lazy"
+            referrerpolicy="no-referrer"
+            onerror="
+              this.style.display='none';
+              this.nextElementSibling.classList.remove('hidden');
+            "
+          >
+
+          <div
+            class="poster-placeholder hidden"
+          >
+            ${categoryIcon(
+              item.group
+            )}
+          </div>
+
+        `
+
+        : `
+
+          <div
+            class="poster-placeholder"
+          >
+            ${categoryIcon(
+              item.group
+            )}
+          </div>
+
+        `;
+
+
+    return image;
 
   }
 
@@ -769,7 +1117,7 @@
      CARD
   ===================================================== */
 
-  function createCard(item) {
+  function cardHTML(item) {
 
     const favorite =
       isFavorite(
@@ -777,89 +1125,61 @@
       );
 
 
-    const poster =
-      item.logo
-
-        ? `
-          <img
-            loading="lazy"
-            src="${escapeHtml(
-              item.logo
-            )}"
-            alt=""
-            onerror="
-              this.style.display='none'
-            "
-          >
-        `
-
-        : `
-          <div
-            class="poster-placeholder"
-          >
-            ${categoryIcon(
-              item.group
-            )}
-          </div>
-        `;
-
-
     return `
 
       <button
         class="media-card"
-        data-id="${escapeHtml(
+        type="button"
+        data-id="${escapeHTML(
           item.uid
         )}"
-        type="button"
       >
 
-        <div class="poster">
+        <div class="card-poster">
 
-          ${poster}
+          ${posterHTML(
+            item
+          )}
 
 
-          <div class="play-overlay">
+          <div class="card-overlay">
 
-            <div class="play-circle">
+            <span class="play-circle">
               ▶
-            </div>
+            </span>
 
           </div>
 
 
-          <span
-            class="favorite-badge"
-            data-id="${escapeHtml(
+          <button
+            class="card-favorite"
+            type="button"
+            data-favorite="${escapeHTML(
               item.uid
             )}"
-            title="Favoritar"
+            aria-label="Favorito"
           >
             ${
               favorite
                 ? "★"
                 : "☆"
             }
-          </span>
+          </button>
 
         </div>
 
 
-        <div class="card-info">
-
-          <div class="card-title">
-            ${escapeHtml(
-              item.title
-            )}
-          </div>
+        <div class="card-title">
+          ${escapeHTML(
+            item.title
+          )}
+        </div>
 
 
-          <div class="card-meta">
-            ${escapeHtml(
-              item.group
-            )}
-          </div>
-
+        <div class="card-meta">
+          ${escapeHTML(
+            item.group
+          )}
         </div>
 
       </button>
@@ -870,81 +1190,310 @@
 
 
   /* =====================================================
-     RENDER
+     CATEGORY ROW
   ===================================================== */
 
-  function render() {
+  function categoryRowHTML(
+    title,
+    items,
+    delay
+  ) {
 
-    applyFilters();
-
-
-    const visible =
-      state.filtered.slice(
+    const list =
+      items.slice(
         0,
-        state.visible
+        state.visiblePerRow
       );
 
 
-    if (resultCount) {
-
-      resultCount.textContent =
-        `${state.filtered.length.toLocaleString(
-          "pt-BR"
-        )} itens`;
-
+    if (!list.length) {
+      return "";
     }
 
 
-    if (sectionTitle) {
+    return `
 
-      sectionTitle.textContent =
-        state.favoritesOnly
+      <section
+        class="category-section"
+        style="animation-delay:${delay}ms"
+      >
 
-          ? "Seus favoritos"
+        <div class="category-header">
 
-          : state.category === "all"
+          <h2>
+            ${escapeHTML(
+              title
+            )}
+          </h2>
 
-            ? "Destaques"
+          <span>
+            ${items.length.toLocaleString(
+              "pt-BR"
+            )} conteúdos
+          </span>
 
+        </div>
+
+
+        <div class="card-row">
+
+          ${list
+            .map(
+              cardHTML
+            )
+            .join("")}
+
+        </div>
+
+      </section>
+
+    `;
+
+  }
+
+
+  /* =====================================================
+     HOME / ROWS
+  ===================================================== */
+
+  function renderLibrary() {
+
+    if (!library) {
+      return;
+    }
+
+
+    const filtered =
+      getFilteredItems();
+
+
+    /*
+     * Pesquisa global:
+     * mostra uma única grade horizontal.
+     */
+
+    if (
+      state.search ||
+      state.favoritesOnly ||
+      state.category !== "all"
+    ) {
+
+      const title =
+        state.search
+          ? `Resultados para "${state.search}"`
+          : state.favoritesOnly
+            ? "Meus favoritos"
             : state.category;
 
+
+      library.innerHTML =
+        categoryRowHTML(
+          title,
+          filtered,
+          0
+        );
+
+
+      if (!filtered.length) {
+
+        library.innerHTML = "";
+
+        $("#emptySearch")
+          ?.classList.remove(
+            "hidden"
+          );
+
+      } else {
+
+        $("#emptySearch")
+          ?.classList.add(
+            "hidden"
+          );
+
+      }
+
+
+      attachCardEvents();
+
+      return;
+
     }
 
 
-    if (emptyState) {
-
-      emptyState.classList.toggle(
-        "hidden",
-        state.filtered.length > 0
+    $("#emptySearch")
+      ?.classList.add(
+        "hidden"
       );
 
+
+    /*
+     * HOME
+     */
+
+    const rows = [];
+
+
+    /*
+     * Continue assistindo
+     */
+
+    const history =
+      getHistory();
+
+
+    const historyItems =
+      history
+        .map(
+          entry =>
+            state.items.find(
+              item =>
+                item.uid ===
+                entry.uid
+            )
+        )
+        .filter(Boolean);
+
+
+    if (historyItems.length) {
+
+      rows.push({
+
+        title:
+          "Continue assistindo",
+
+        items:
+          historyItems
+
+      });
+
     }
 
 
-    if (mediaGrid) {
+    /*
+     * Favoritos
+     */
 
-      mediaGrid.innerHTML =
-        visible
-          .map(createCard)
-          .join("");
-
-    }
-
-
-    const loadMore =
-      $("#loadMore");
-
-
-    if (loadMore) {
-
-      loadMore.classList.toggle(
-        "hidden",
-        state.visible >=
-          state.filtered.length
+    const favoriteItems =
+      state.items.filter(
+        item =>
+          isFavorite(
+            item.uid
+          )
       );
 
+
+    if (favoriteItems.length) {
+
+      rows.push({
+
+        title:
+          "Minha lista",
+
+        items:
+          favoriteItems
+
+      });
+
     }
 
+
+    /*
+     * Destaques
+     */
+
+    if (state.items.length) {
+
+      const shuffled =
+        [...state.items]
+          .sort(
+            () =>
+              Math.random() - .5
+          )
+          .slice(0, 40);
+
+
+      rows.push({
+
+        title:
+          "Em destaque",
+
+        items:
+          shuffled
+
+      });
+
+    }
+
+
+    /*
+     * Todas as categorias.
+     */
+
+    const used =
+      new Set();
+
+
+    for (
+      const [
+        category
+      ] of state.categories
+    ) {
+
+      const items =
+        state.items.filter(
+          item =>
+            item.group ===
+            category
+        );
+
+
+      if (
+        items.length &&
+        !used.has(category)
+      ) {
+
+        rows.push({
+
+          title:
+            category,
+
+          items
+
+        });
+
+
+        used.add(
+          category
+        );
+
+      }
+
+    }
+
+
+    library.innerHTML =
+      rows
+        .map(
+          (row, index) =>
+            categoryRowHTML(
+              row.title,
+              row.items,
+              index * 45
+            )
+        )
+        .join("");
+
+
+    attachCardEvents();
+
+  }
+
+
+  /* =====================================================
+     CARD EVENTS
+  ===================================================== */
+
+  function attachCardEvents() {
 
     $$(".media-card")
       .forEach(card => {
@@ -953,26 +1502,36 @@
           "click",
           event => {
 
+            /*
+             * O botão de favorito possui
+             * seu próprio evento.
+             */
+
             if (
               event.target.closest(
-                ".favorite-badge"
+                "[data-favorite]"
               )
             ) {
               return;
             }
 
 
+            const id =
+              card.dataset.id;
+
+
             const item =
               state.items.find(
                 x =>
-                  x.uid ===
-                  card.dataset.id
+                  x.uid === id
               );
 
 
             if (item) {
 
-              openPlayer(item);
+              openPlayer(
+                item
+              );
 
             }
 
@@ -982,7 +1541,9 @@
       });
 
 
-    $$(".favorite-badge")
+    $$(
+      "[data-favorite]"
+    )
       .forEach(button => {
 
         button.addEventListener(
@@ -993,7 +1554,7 @@
 
 
             toggleFavorite(
-              button.dataset.id
+              button.dataset.favorite
             );
 
           }
@@ -1005,108 +1566,494 @@
 
 
   /* =====================================================
-     PLAYER
+     HERO
   ===================================================== */
 
-  function openPlayer(item) {
+  function chooseHero() {
 
-    state.current =
-      item;
-
-
-    const playerTitle =
-      $("#playerTitle");
-
-
-    const favoriteButton =
-      $("#playerFavorite");
-
-
-    if (playerTitle) {
-
-      playerTitle.textContent =
-        item.title;
-
+    if (!state.items.length) {
+      return null;
     }
 
 
-    if (favoriteButton) {
-
-      favoriteButton.textContent =
-        isFavorite(
-          item.uid
-        )
-          ? "★ Remover dos favoritos"
-          : "☆ Favoritar";
-
-    }
-
-
-    if (videoFallback) {
-
-      videoFallback.classList.add(
-        "hidden"
-      );
-
-    }
-
-
-    if (video) {
-
-      video.classList.remove(
-        "hidden"
+    const candidates =
+      state.items.filter(
+        item =>
+          item.logo
       );
 
 
-      video.pause();
+    const source =
+      candidates.length
+        ? candidates
+        : state.items;
 
 
-      video.src =
-        item.url;
+    return source[
+      Math.floor(
+        Math.random() *
+        source.length
+      )
+    ];
+
+  }
 
 
-      video.load();
+  function renderHero() {
+
+    const hero =
+      chooseHero();
 
 
-      video.play()
-        .catch(() => {});
+    state.hero =
+      hero;
+
+
+    if (!hero) {
+      return;
+    }
+
+
+    const heroImage =
+      $("#heroImage");
+
+
+    const heroTitle =
+      $("#heroTitle");
+
+
+    const heroDescription =
+      $("#heroDescription");
+
+
+    if (
+      heroImage &&
+      hero.logo
+    ) {
+
+      heroImage.style.backgroundImage =
+        `
+          url("${CSS.escape(
+            hero.logo
+          )}")
+        `;
 
     }
 
 
-    if (playerModal) {
+    if (heroTitle) {
 
-      playerModal.classList.remove(
-        "hidden"
-      );
+      heroTitle.textContent =
+        hero.title;
+
+    }
+
+
+    if (heroDescription) {
+
+      heroDescription.textContent =
+        `${hero.group} · ${state.items.length.toLocaleString(
+          "pt-BR"
+        )} conteúdos disponíveis`;
 
     }
 
   }
 
 
-  function closePlayer() {
+  /* =====================================================
+     PLAYER
+  ===================================================== */
 
-    if (video) {
+  function destroyHLS() {
 
-      video.pause();
+    if (state.hls) {
 
-      video.removeAttribute(
-        "src"
+      try {
+
+        state.hls.destroy();
+
+      } catch {
+
+        // ignore
+
+      }
+
+      state.hls =
+        null;
+
+    }
+
+  }
+
+
+  function resetPlayer() {
+
+    destroyHLS();
+
+
+    if (!video) {
+      return;
+    }
+
+
+    video.pause();
+
+
+    video.removeAttribute(
+      "src"
+    );
+
+
+    video.load();
+
+  }
+
+
+  function setPlayerLoading(
+    visible
+  ) {
+
+    playerLoading
+      ?.classList.toggle(
+        "hidden",
+        !visible
       );
 
-      video.load();
+  }
+
+
+  function setPlayerError(
+    visible,
+    message = ""
+  ) {
+
+    playerError
+      ?.classList.toggle(
+        "hidden",
+        !visible
+      );
+
+
+    if (
+      message &&
+      playerErrorText
+    ) {
+
+      playerErrorText.textContent =
+        message;
+
+    }
+
+  }
+
+
+  function updatePlayerFavorite() {
+
+    const button =
+      $("#playerFavorite");
+
+
+    if (
+      !button ||
+      !state.current
+    ) {
+      return;
+    }
+
+
+    button.textContent =
+      isFavorite(
+        state.current.uid
+      )
+        ? "★"
+        : "☆";
+
+  }
+
+
+  async function playNative(
+    url
+  ) {
+
+    if (!video) {
+      return;
+    }
+
+
+    video.src =
+      url;
+
+
+    video.load();
+
+
+    try {
+
+      await video.play();
+
+    } catch {
+
+      /*
+       * Navegadores podem impedir
+       * autoplay. O usuário ainda
+       * pode apertar Play no player.
+       */
+
+    }
+
+  }
+
+
+  async function playStream(
+    item
+  ) {
+
+    resetPlayer();
+
+
+    setPlayerError(
+      false
+    );
+
+
+    setPlayerLoading(
+      true
+    );
+
+
+    const url =
+      normalizeURL(
+        item.url
+      );
+
+
+    if (!url) {
+
+      setPlayerLoading(
+        false
+      );
+
+      setPlayerError(
+        true,
+        "A playlist não forneceu uma URL válida para este conteúdo."
+      );
+
+      return;
 
     }
 
 
-    if (playerModal) {
+    const isHLS =
+      /\.m3u8($|\?)/i.test(
+        url
+      );
 
-      playerModal.classList.add(
+
+    /*
+     * Safari/iOS possui HLS nativo.
+     */
+
+    if (
+      isHLS &&
+      video.canPlayType(
+        "application/vnd.apple.mpegurl"
+      )
+    ) {
+
+      await playNative(
+        url
+      );
+
+
+      setPlayerLoading(
+        false
+      );
+
+      return;
+
+    }
+
+
+    /*
+     * Chrome / Edge / Firefox:
+     * HLS.js quando disponível.
+     */
+
+    if (
+      isHLS &&
+      window.Hls &&
+      window.Hls.isSupported()
+    ) {
+
+      const hls =
+        new window.Hls({
+
+          enableWorker: true,
+
+          lowLatencyMode: true,
+
+          backBufferLength: 90,
+
+          maxBufferLength: 30
+
+        });
+
+
+      state.hls =
+        hls;
+
+
+      hls.on(
+        window.Hls.Events.MEDIA_ATTACHED,
+        () => {
+
+          hls.loadSource(
+            url
+          );
+
+        }
+      );
+
+
+      hls.on(
+        window.Hls.Events.MANIFEST_PARSED,
+        async () => {
+
+          setPlayerLoading(
+            false
+          );
+
+
+          try {
+
+            await video.play();
+
+          } catch {
+
+            // autoplay bloqueado
+
+          }
+
+        }
+      );
+
+
+      hls.on(
+        window.Hls.Events.ERROR,
+        (
+          event,
+          data
+        ) => {
+
+          if (
+            data?.fatal
+          ) {
+
+            setPlayerLoading(
+              false
+            );
+
+
+            setPlayerError(
+              true,
+              "O servidor ou formato deste stream não pode ser reproduzido diretamente neste navegador."
+            );
+
+
+            try {
+
+              hls.destroy();
+
+            } catch {}
+
+          }
+
+        }
+      );
+
+
+      hls.attachMedia(
+        video
+      );
+
+
+      return;
+
+    }
+
+
+    /*
+     * Outros formatos:
+     * tenta reprodução nativa.
+     */
+
+    await playNative(
+      url
+    );
+
+
+    setPlayerLoading(
+      false
+    );
+
+  }
+
+
+  function openPlayer(
+    item
+  ) {
+
+    state.current =
+      item;
+
+
+    $("#playerTitle").textContent =
+      item.title;
+
+
+    $("#playerCategory").textContent =
+      item.group;
+
+
+    updatePlayerFavorite();
+
+
+    playerModal
+      ?.classList.remove(
         "hidden"
       );
 
-    }
+
+    document.body.style.overflow =
+      "hidden";
+
+
+    addHistory(
+      item
+    );
+
+
+    playStream(
+      item
+    );
+
+  }
+
+
+  function closePlayer() {
+
+    resetPlayer();
+
+
+    playerModal
+      ?.classList.add(
+        "hidden"
+      );
+
+
+    document.body.style.overflow =
+      "";
 
 
     state.current =
@@ -1116,66 +2063,311 @@
 
 
   /* =====================================================
-     CARREGAR ARQUIVO
+     PROCESSAR PLAYLIST
   ===================================================== */
 
-  async function loadFromFile(
-    file,
-    name
+  async function processPlaylist(
+    text,
+    playlistName
   ) {
 
-    setupStatus.textContent =
-      "Lendo sua playlist…";
-
-
-    const text =
-      await file.text();
-
-
-    const items =
-      parseM3U(text);
-
-
-    if (!items.length) {
+    if (
+      !text ||
+      !String(text).trim()
+    ) {
 
       throw new Error(
-        "O arquivo não possui entradas M3U válidas."
+        "A playlist está vazia."
       );
 
     }
 
 
-    saveConfig({
+    showLoading(
+      "Lendo sua playlist...",
+      5
+    );
 
-      type: "file",
 
-      name:
-        name ||
+    /*
+     * Damos uma pequena folga ao navegador
+     * antes do parser de uma playlist enorme.
+     */
+
+    await sleep(
+      50
+    );
+
+
+    const items =
+      parseM3U(
+        text,
+        (
+          current,
+          total
+        ) => {
+
+          const percent =
+            Math.min(
+              65,
+              5 +
+              (
+                current /
+                total
+              ) *
+              60
+            );
+
+
+          updateLoading(
+            `Processando conteúdo ${current.toLocaleString(
+              "pt-BR"
+            )}...`,
+            percent
+          );
+
+        }
+      );
+
+
+    if (!items.length) {
+
+      throw new Error(
+        "Nenhum conteúdo M3U válido foi encontrado. Verifique se o arquivo possui entradas #EXTINF."
+      );
+
+    }
+
+
+    updateLoading(
+      "Organizando categorias...",
+      72
+    );
+
+
+    await sleep(
+      30
+    );
+
+
+    state.items =
+      items;
+
+
+    state.playlistName =
+      playlistName ||
+      "Minha playlist";
+
+
+    state.category =
+      "all";
+
+
+    state.search =
+      "";
+
+
+    state.favoritesOnly =
+      false;
+
+
+    buildCategories();
+
+
+    updateLoading(
+      "Preparando interface...",
+      90
+    );
+
+
+    await sleep(
+      120
+    );
+
+
+    renderNavigation();
+
+    renderHero();
+
+    renderLibrary();
+
+
+    updateLoading(
+      "Tudo pronto.",
+      100
+    );
+
+
+    await sleep(
+      300
+    );
+
+
+    hideLoading();
+
+    showHome();
+
+  }
+
+
+  /* =====================================================
+     LOADING UI
+  ===================================================== */
+
+  function showLoading(
+    message,
+    percent
+  ) {
+
+    loadingScreen
+      ?.classList.remove(
+        "hidden"
+      );
+
+
+    updateLoading(
+      message,
+      percent
+    );
+
+  }
+
+
+  function updateLoading(
+    message,
+    percent
+  ) {
+
+    if (loadingText) {
+
+      loadingText.textContent =
+        message;
+
+    }
+
+
+    if (loadingProgress) {
+
+      loadingProgress.style.width =
+        `${percent}%`;
+
+    }
+
+  }
+
+
+  function hideLoading() {
+
+    loadingScreen
+      ?.classList.add(
+        "hidden"
+      );
+
+  }
+
+
+  function showHome() {
+
+    setupScreen
+      ?.classList.add(
+        "hidden"
+      );
+
+
+    homeScreen
+      ?.classList.remove(
+        "hidden"
+      );
+
+  }
+
+
+  function showSetup() {
+
+    closePlayer();
+
+
+    homeScreen
+      ?.classList.add(
+        "hidden"
+      );
+
+
+    setupScreen
+      ?.classList.remove(
+        "hidden"
+      );
+
+  }
+
+
+  /* =====================================================
+     FILE
+  ===================================================== */
+
+  async function handleFile(
+    file,
+    name
+  ) {
+
+    if (!file) {
+
+      throw new Error(
+        "Selecione um arquivo M3U."
+      );
+
+    }
+
+
+    const valid =
+      /\.(m3u8?|txt)$/i.test(
         file.name
+      );
 
-    });
+
+    if (!valid) {
+
+      throw new Error(
+        "Selecione um arquivo M3U ou M3U8."
+      );
+
+    }
 
 
-    showHome(
-      items,
+    setSetupMessage(
+      "Lendo arquivo..."
+    );
+
+
+    /*
+     * text() é suportado pelos browsers
+     * modernos e evita FileReader manual.
+     */
+
+    const text =
+      await file.text();
+
+
+    await processPlaylist(
+      text,
       name ||
-        file.name
+      file.name
     );
 
   }
 
 
   /* =====================================================
-     CARREGAR URL
+     URL M3U
   ===================================================== */
 
-  async function loadFromUrl(
+  async function handleURL(
     url,
     name
   ) {
 
     url =
-      normalizeUrl(
+      normalizeURL(
         url
       );
 
@@ -1183,14 +2375,16 @@
     if (!url) {
 
       throw new Error(
-        "Digite a URL da playlist."
+        "Informe a URL da playlist."
       );
 
     }
 
 
-    setupStatus.textContent =
-      "Conectando à playlist…";
+    showLoading(
+      "Conectando à playlist...",
+      10
+    );
 
 
     let response;
@@ -1200,13 +2394,20 @@
 
       response =
         await fetch(
-          url
+          url,
+          {
+            method: "GET",
+            cache: "no-store"
+          }
         );
 
     } catch {
 
+      hideLoading();
+
+
       throw new Error(
-        "Não foi possível acessar a URL. O servidor pode bloquear conexões externas (CORS)."
+        "Não foi possível acessar a playlist. O servidor pode bloquear requisições do navegador (CORS)."
       );
 
     }
@@ -1214,8 +2415,11 @@
 
     if (!response.ok) {
 
+      hideLoading();
+
+
       throw new Error(
-        `Não foi possível acessar a playlist (${response.status}).`
+        `Servidor respondeu com HTTP ${response.status}.`
       );
 
     }
@@ -1225,36 +2429,10 @@
       await response.text();
 
 
-    const items =
-      parseM3U(text);
-
-
-    if (!items.length) {
-
-      throw new Error(
-        "Nenhum conteúdo M3U válido foi encontrado."
-      );
-
-    }
-
-
-    saveConfig({
-
-      type: "url",
-
-      name:
-        name ||
-        "Minha playlist",
-
-      url
-
-    });
-
-
-    showHome(
-      items,
+    await processPlaylist(
+      text,
       name ||
-        "Minha playlist"
+      "Minha playlist"
     );
 
   }
@@ -1264,7 +2442,7 @@
      XTREAM
   ===================================================== */
 
-  async function loadXtream(
+  async function handleXtream(
     server,
     username,
     password,
@@ -1272,7 +2450,7 @@
   ) {
 
     server =
-      normalizeUrl(
+      normalizeURL(
         server
       ).replace(
         /\/+$/,
@@ -1295,7 +2473,7 @@
     if (!server) {
 
       throw new Error(
-        "Digite o servidor."
+        "Informe o servidor."
       );
 
     }
@@ -1304,7 +2482,7 @@
     if (!username) {
 
       throw new Error(
-        "Digite o usuário."
+        "Informe o usuário."
       );
 
     }
@@ -1313,13 +2491,17 @@
     if (!password) {
 
       throw new Error(
-        "Digite a senha."
+        "Informe a senha."
       );
 
     }
 
 
-    const playlistUrl =
+    /*
+     * Endpoint padrão Xtream Codes.
+     */
+
+    const url =
       `${server}/get.php` +
       `?username=${encodeURIComponent(
         username
@@ -1331,227 +2513,104 @@
       `&output=ts`;
 
 
-    await loadFromUrl(
-      playlistUrl,
+    await handleURL(
+      url,
       name ||
-        "Minha TV"
-    );
-
-
-    saveConfig({
-
-      type: "xtream",
-
-      name:
-        name ||
-        "Minha TV",
-
-      server,
-
-      username,
-
-      password
-
-    });
-
-  }
-
-
-  /* =====================================================
-     MOSTRAR HOME
-  ===================================================== */
-
-  function showHome(
-    items,
-    playlistName
-  ) {
-
-    if (!items.length) {
-
-      throw new Error(
-        "Nenhum conteúdo foi encontrado."
-      );
-
-    }
-
-
-    state.items =
-      items;
-
-
-    state.playlistName =
-      playlistName ||
-      "Minha playlist";
-
-
-    state.category =
-      "all";
-
-
-    state.favoritesOnly =
-      false;
-
-
-    state.visible =
-      80;
-
-
-    setupView.classList.add(
-      "hidden"
-    );
-
-
-    homeView.classList.remove(
-      "hidden"
-    );
-
-
-    const heroTitle =
-      $("#heroTitle");
-
-
-    const heroText =
-      $("#heroText");
-
-
-    if (heroTitle) {
-
-      heroTitle.textContent =
-        state.playlistName;
-
-    }
-
-
-    if (heroText) {
-
-      heroText.textContent =
-        `${items.length.toLocaleString(
-          "pt-BR"
-        )} conteúdos disponíveis para você.`;
-
-    }
-
-
-    renderNavigation();
-
-    render();
-
-  }
-
-
-  /* =====================================================
-     ERRO
-  ===================================================== */
-
-  function handleError(
-    error
-  ) {
-
-    console.error(
-      error
-    );
-
-
-    const message =
-      error?.message ||
-      "Não foi possível carregar a playlist.";
-
-
-    if (setupStatus) {
-
-      setupStatus.textContent =
-        message;
-
-    }
-
-
-    showToast(
-      message
+      "Minha TV"
     );
 
   }
 
 
   /* =====================================================
-     ABAS
+     TABS
   ===================================================== */
 
-  $$(".source-tab")
-    .forEach(tab => {
+  function setupTabs() {
 
-      tab.addEventListener(
-        "click",
-        () => {
+    $$(".source-tab")
+      .forEach(tab => {
 
-          $$(".source-tab")
-            .forEach(item =>
-              item.classList.remove(
-                "active"
-              )
-            );
+        tab.addEventListener(
+          "click",
+          () => {
 
-
-          $$(".source-panel")
-            .forEach(panel =>
-              panel.classList.remove(
-                "active"
-              )
-            );
+            $$(".source-tab")
+              .forEach(
+                button =>
+                  button.classList.remove(
+                    "active"
+                  )
+              );
 
 
-          tab.classList.add(
-            "active"
-          );
+            $$(".source-panel")
+              .forEach(
+                panel =>
+                  panel.classList.remove(
+                    "active"
+                  )
+              );
 
 
-          const panel =
-            $(
-              `#${tab.dataset.source}Form`
-            );
-
-
-          if (panel) {
-
-            panel.classList.add(
+            tab.classList.add(
               "active"
             );
 
+
+            const panel =
+              $(
+                `#${tab.dataset.tab}Panel`
+              );
+
+
+            panel
+              ?.classList.add(
+                "active"
+              );
+
+
+            setSetupMessage(
+              ""
+            );
+
           }
+        );
 
+      });
 
-          if (setupStatus) {
-
-            setupStatus.textContent =
-              "";
-
-          }
-
-        }
-      );
-
-    });
+  }
 
 
   /* =====================================================
-     ARQUIVO
+     FILE INPUT
   ===================================================== */
 
-  const m3uFile =
-    $("#m3uFile");
+  function setupFileInput() {
+
+    const input =
+      $("#playlistFile");
 
 
-  if (m3uFile) {
+    const zone =
+      $("#uploadZone");
 
-    m3uFile.addEventListener(
+
+    const label =
+      $("#selectedFile");
+
+
+    if (!input) {
+      return;
+    }
+
+
+    input.addEventListener(
       "change",
-      event => {
+      () => {
 
         const file =
-          event.target.files?.[0];
-
-
-        const label =
-          $("#fileLabel");
+          input.files?.[0];
 
 
         if (label) {
@@ -1559,106 +2618,112 @@
           label.textContent =
             file
               ? file.name
-              : "M3U ou M3U8";
+              : "M3U / M3U8";
 
         }
 
       }
     );
 
-  }
+
+    if (!zone) {
+      return;
+    }
 
 
-  /* =====================================================
-     URL FORM
-  ===================================================== */
+    [
+      "dragenter",
+      "dragover"
+    ]
+      .forEach(
+        eventName => {
 
-  const urlForm =
-    $("#urlForm");
+          zone.addEventListener(
+            eventName,
+            event => {
 
+              event.preventDefault();
 
-  if (urlForm) {
+              zone.classList.add(
+                "dragover"
+              );
 
-    urlForm.addEventListener(
-      "submit",
-      async event => {
-
-        event.preventDefault();
-
-
-        try {
-
-          await loadFromUrl(
-
-            $("#m3uUrl")?.value,
-
-            $("#urlName")?.value
-
-          );
-
-        } catch (error) {
-
-          handleError(
-            error
+            }
           );
 
         }
-
-      }
-    );
-
-  }
+      );
 
 
-  /* =====================================================
-     FILE FORM
-  ===================================================== */
+    [
+      "dragleave",
+      "drop"
+    ]
+      .forEach(
+        eventName => {
 
-  const fileForm =
-    $("#fileForm");
+          zone.addEventListener(
+            eventName,
+            event => {
+
+              event.preventDefault();
+
+              zone.classList.remove(
+                "dragover"
+              );
+
+            }
+          );
+
+        }
+      );
 
 
-  if (fileForm) {
-
-    fileForm.addEventListener(
-      "submit",
-      async event => {
-
-        event.preventDefault();
-
+    zone.addEventListener(
+      "drop",
+      event => {
 
         const file =
-          $("#m3uFile")
+          event.dataTransfer
             ?.files?.[0];
 
 
         if (!file) {
-
-          handleError(
-            new Error(
-              "Selecione um arquivo M3U."
-            )
-          );
-
           return;
-
         }
 
 
         try {
 
-          await loadFromFile(
+          const transfer =
+            new DataTransfer();
 
-            file,
 
-            $("#fileName")?.value
-
+          transfer.items.add(
+            file
           );
 
-        } catch (error) {
 
-          handleError(
-            error
+          input.files =
+            transfer.files;
+
+
+          if (label) {
+
+            label.textContent =
+              file.name;
+
+          }
+
+        } catch {
+
+          /*
+           * Alguns navegadores não permitem
+           * alterar input.files programaticamente.
+           */
+
+          showToast(
+            "Clique na área e selecione o arquivo manualmente."
           );
 
         }
@@ -1670,46 +2735,148 @@
 
 
   /* =====================================================
-     XTREAM FORM
+     FORMULÁRIOS
   ===================================================== */
 
-  const xtreamForm =
-    $("#xtreamForm");
+  function setupForms() {
+
+    $("#filePanel")
+      ?.addEventListener(
+        "submit",
+        async event => {
+
+          event.preventDefault();
 
 
-  if (xtreamForm) {
+          try {
 
-    xtreamForm.addEventListener(
-      "submit",
-      async event => {
-
-        event.preventDefault();
+            const file =
+              $("#playlistFile")
+                ?.files?.[0];
 
 
-        try {
+            const name =
+              $("#playlistName")
+                ?.value
+                .trim();
 
-          await loadXtream(
 
-            $("#xtServer")?.value,
+            await handleFile(
+              file,
+              name
+            );
 
-            $("#xtUser")?.value,
+          } catch (error) {
 
-            $("#xtPass")?.value,
+            hideLoading();
 
-            $("#xtName")?.value
 
-          );
+            setSetupMessage(
+              error.message
+            );
 
-        } catch (error) {
 
-          handleError(
-            error
-          );
+            showToast(
+              error.message
+            );
+
+          }
 
         }
+      );
 
-      }
-    );
+
+    $("#urlPanel")
+      ?.addEventListener(
+        "submit",
+        async event => {
+
+          event.preventDefault();
+
+
+          try {
+
+            const url =
+              $("#playlistUrl")
+                ?.value;
+
+
+            const name =
+              $("#urlPlaylistName")
+                ?.value
+                .trim();
+
+
+            await handleURL(
+              url,
+              name
+            );
+
+          } catch (error) {
+
+            hideLoading();
+
+
+            setSetupMessage(
+              error.message
+            );
+
+
+            showToast(
+              error.message
+            );
+
+          }
+
+        }
+      );
+
+
+    $("#xtreamPanel")
+      ?.addEventListener(
+        "submit",
+        async event => {
+
+          event.preventDefault();
+
+
+          try {
+
+            await handleXtream(
+
+              $("#xtreamServer")
+                ?.value,
+
+              $("#xtreamUsername")
+                ?.value,
+
+              $("#xtreamPassword")
+                ?.value,
+
+              $("#xtreamName")
+                ?.value
+                .trim()
+
+            );
+
+          } catch (error) {
+
+            hideLoading();
+
+
+            setSetupMessage(
+              error.message
+            );
+
+
+            showToast(
+              error.message
+            );
+
+          }
+
+        }
+      );
 
   }
 
@@ -1718,45 +2885,32 @@
      BUSCA
   ===================================================== */
 
-  const searchInput =
-    $("#searchInput");
+  function setupSearch() {
+
+    if (!search) {
+      return;
+    }
 
 
-  if (searchInput) {
-
-    searchInput.addEventListener(
+    search.addEventListener(
       "input",
       () => {
 
-        state.visible =
-          80;
-
-        render();
-
-      }
-    );
-
-  }
+        state.search =
+          search.value;
 
 
-  /* =====================================================
-     LOAD MORE
-  ===================================================== */
-
-  const loadMore =
-    $("#loadMore");
+        state.category =
+          "all";
 
 
-  if (loadMore) {
+        state.favoritesOnly =
+          false;
 
-    loadMore.addEventListener(
-      "click",
-      () => {
 
-        state.visible +=
-          80;
+        renderNavigation();
 
-        render();
+        renderLibrary();
 
       }
     );
@@ -1768,138 +2922,244 @@
      FAVORITOS
   ===================================================== */
 
-  const favoritesButton =
-    $("#favoritesBtn");
+  function setupFavorites() {
+
+    $("#favoritesToggle")
+      ?.addEventListener(
+        "click",
+        () => {
+
+          state.favoritesOnly =
+            !state.favoritesOnly;
 
 
-  if (favoritesButton) {
-
-    favoritesButton.addEventListener(
-      "click",
-      () => {
-
-        state.favoritesOnly =
-          !state.favoritesOnly;
+          state.category =
+            "all";
 
 
-        state.category =
-          "all";
+          if (!state.favoritesOnly) {
+
+            state.search =
+              "";
 
 
-        renderNavigation();
+            if (search) {
 
-        render();
+              search.value =
+                "";
 
-      }
-    );
+            }
+
+          }
+
+
+          renderNavigation();
+
+          renderLibrary();
+
+        }
+      );
 
   }
 
 
   /* =====================================================
-     MENU MOBILE
+     MOBILE MENU
   ===================================================== */
 
-  const mobileMenu =
-    $("#mobileMenu");
+  function setupMobileMenu() {
+
+    $("#mobileMenu")
+      ?.addEventListener(
+        "click",
+        () => {
+
+          $("#sidebar")
+            ?.classList.toggle(
+              "open"
+            );
+
+        }
+      );
+
+  }
 
 
-  if (mobileMenu) {
+  /* =====================================================
+     PLAYER CONTROLS
+  ===================================================== */
 
-    mobileMenu.addEventListener(
-      "click",
-      () => {
+  function setupPlayer() {
 
-        const sidebar =
-          $("#sidebar");
+    $("#closePlayer")
+      ?.addEventListener(
+        "click",
+        closePlayer
+      );
 
 
-        if (sidebar) {
+    playerModal
+      ?.addEventListener(
+        "click",
+        event => {
 
-          sidebar.classList.toggle(
-            "open"
+          if (
+            event.target ===
+            playerModal
+          ) {
+
+            closePlayer();
+
+          }
+
+        }
+      );
+
+
+    $("#playerFavorite")
+      ?.addEventListener(
+        "click",
+        () => {
+
+          if (
+            state.current
+          ) {
+
+            toggleFavorite(
+              state.current.uid
+            );
+
+          }
+
+        }
+      );
+
+
+    $("#retryPlayer")
+      ?.addEventListener(
+        "click",
+        () => {
+
+          if (
+            state.current
+          ) {
+
+            playStream(
+              state.current
+            );
+
+          }
+
+        }
+      );
+
+
+    video
+      ?.addEventListener(
+        "waiting",
+        () => {
+
+          setPlayerLoading(
+            true
           );
 
         }
+      );
 
-      }
-    );
+
+    video
+      ?.addEventListener(
+        "playing",
+        () => {
+
+          setPlayerLoading(
+            false
+          );
+
+          setPlayerError(
+            false
+          );
+
+        }
+      );
+
+
+    video
+      ?.addEventListener(
+        "canplay",
+        () => {
+
+          setPlayerLoading(
+            false
+          );
+
+        }
+      );
+
+
+    video
+      ?.addEventListener(
+        "error",
+        () => {
+
+          setPlayerLoading(
+            false
+          );
+
+
+          setPlayerError(
+            true,
+            "Este stream não pôde ser reproduzido diretamente pelo navegador."
+          );
+
+        }
+      );
 
   }
 
 
   /* =====================================================
-     PLAYER
+     HERO BUTTONS
   ===================================================== */
 
-  const closePlayerButton =
-    $("#closePlayer");
+  function setupHero() {
 
+    $("#heroPlay")
+      ?.addEventListener(
+        "click",
+        () => {
 
-  if (closePlayerButton) {
+          if (
+            state.hero
+          ) {
 
-    closePlayerButton.addEventListener(
-      "click",
-      closePlayer
-    );
+            openPlayer(
+              state.hero
+            );
 
-  }
-
-
-  if (playerModal) {
-
-    playerModal.addEventListener(
-      "click",
-      event => {
-
-        if (
-          event.target ===
-          playerModal
-        ) {
-
-          closePlayer();
+          }
 
         }
-
-      }
-    );
-
-  }
+      );
 
 
-  /* =====================================================
-     PLAYER FAVORITE
-  ===================================================== */
+    $("#heroInfo")
+      ?.addEventListener(
+        "click",
+        () => {
 
-  const playerFavorite =
-    $("#playerFavorite");
+          if (
+            state.hero
+          ) {
 
+            showToast(
+              `${state.hero.title} · ${state.hero.group}`
+            );
 
-  if (playerFavorite) {
+          }
 
-    playerFavorite.addEventListener(
-      "click",
-      () => {
-
-        if (!state.current) {
-          return;
         }
-
-
-        toggleFavorite(
-          state.current.uid
-        );
-
-
-        playerFavorite.textContent =
-          isFavorite(
-            state.current.uid
-          )
-            ? "★ Remover dos favoritos"
-            : "☆ Favoritar";
-
-      }
-    );
+      );
 
   }
 
@@ -1908,30 +3168,58 @@
      TROCAR PLAYLIST
   ===================================================== */
 
-  const changePlaylist =
-    $("#changePlaylist");
+  function setupChangePlaylist() {
 
-
-  if (changePlaylist) {
-
-    changePlaylist.addEventListener(
-      "click",
+    const handler =
       () => {
 
-        homeView.classList.add(
-          "hidden"
+        showSetup();
+
+
+        setSetupMessage(
+          ""
         );
 
-
-        setupView.classList.remove(
-          "hidden"
-        );
+      };
 
 
-        if (setupStatus) {
+    $("#changePlaylist")
+      ?.addEventListener(
+        "click",
+        handler
+      );
 
-          setupStatus.textContent =
-            "";
+
+    $("#sidebarChange")
+      ?.addEventListener(
+        "click",
+        handler
+      );
+
+  }
+
+
+  /* =====================================================
+     TECLADO
+  ===================================================== */
+
+  function setupKeyboard() {
+
+    document.addEventListener(
+      "keydown",
+      event => {
+
+        if (
+          event.key ===
+          "Escape"
+        ) {
+
+          closePlayer();
+
+          $("#sidebar")
+            ?.classList.remove(
+              "open"
+            );
 
         }
 
@@ -1942,178 +3230,93 @@
 
 
   /* =====================================================
-     HERO
+     SPLASH
   ===================================================== */
 
-  const heroPlay =
-    $("#heroPlay");
+  async function startSplash() {
 
-
-  if (heroPlay) {
-
-    heroPlay.addEventListener(
-      "click",
-      () => {
-
-        const first =
-          state.filtered[0] ||
-          state.items[0];
-
-
-        if (first) {
-
-          openPlayer(
-            first
-          );
-
-        }
-
-      }
+    await sleep(
+      900
     );
+
+
+    splash
+      ?.classList.add(
+        "hide"
+      );
+
+
+    await sleep(
+      500
+    );
+
+
+    splash
+      ?.classList.add(
+        "hidden"
+      );
+
+
+    setupScreen
+      ?.classList.remove(
+        "hidden"
+      );
 
   }
 
 
   /* =====================================================
-     ERRO DE VÍDEO
+     INIT
   ===================================================== */
 
-  if (video) {
+  function init() {
 
-    video.addEventListener(
-      "error",
-      () => {
+    setupTabs();
 
-        video.classList.add(
-          "hidden"
-        );
+    setupFileInput();
+
+    setupForms();
+
+    setupSearch();
+
+    setupFavorites();
+
+    setupMobileMenu();
+
+    setupPlayer();
+
+    setupHero();
+
+    setupChangePlaylist();
+
+    setupKeyboard();
 
 
-        if (videoFallback) {
-
-          videoFallback.classList.remove(
-            "hidden"
-          );
-
-        }
-
-      }
-    );
+    startSplash();
 
   }
 
 
-  /* =====================================================
-     ESC FECHA PLAYER
-  ===================================================== */
+  /*
+   * Espera o DOM.
+   */
 
-  document.addEventListener(
-    "keydown",
-    event => {
+  if (
+    document.readyState ===
+    "loading"
+  ) {
 
-      if (
-        event.key ===
-        "Escape"
-      ) {
-
-        closePlayer();
-
+    document.addEventListener(
+      "DOMContentLoaded",
+      init,
+      {
+        once: true
       }
+    );
 
-    }
-  );
+  } else {
 
-
-  /* =====================================================
-     RECUPERAR CONFIGURAÇÃO
-  ===================================================== */
-
-  const saved =
-    getSavedConfig();
-
-
-  if (saved) {
-
-    if (
-      saved.type ===
-      "url"
-    ) {
-
-      const name =
-        $("#urlName");
-
-      const url =
-        $("#m3uUrl");
-
-
-      if (name) {
-
-        name.value =
-          saved.name || "";
-
-      }
-
-
-      if (url) {
-
-        url.value =
-          saved.url || "";
-
-      }
-
-    }
-
-
-    if (
-      saved.type ===
-      "xtream"
-    ) {
-
-      const name =
-        $("#xtName");
-
-      const server =
-        $("#xtServer");
-
-      const user =
-        $("#xtUser");
-
-      const pass =
-        $("#xtPass");
-
-
-      if (name) {
-
-        name.value =
-          saved.name || "";
-
-      }
-
-
-      if (server) {
-
-        server.value =
-          saved.server || "";
-
-      }
-
-
-      if (user) {
-
-        user.value =
-          saved.username || "";
-
-      }
-
-
-      if (pass) {
-
-        pass.value =
-          saved.password || "";
-
-      }
-
-    }
+    init();
 
   }
 
