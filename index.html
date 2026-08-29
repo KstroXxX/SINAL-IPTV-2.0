@@ -1,39 +1,61 @@
-SSINAL IPTV
-Início Canais Filmes Séries ＋ Playlist
-☰
-SINAL IPTV • SUA CENTRAL DE ENTRETENIMENTO
-Seu conteúdo. Do seu jeito.
-Importe sua playlist M3U/M3U8 e transforme o navegador em uma experiência de streaming elegante, rápida e organizada.
-Adicionar playlist Explorar biblioteca
-✓ Processamento local   •   ✓ Seus dados ficam neste navegador
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#07080b">
+<meta name="description" content="Sinal IPTV — sua central premium de entretenimento.">
+<title>Sinal IPTV</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header>
+<button class="brand" onclick="showHome()"><span class="mark"><i></i><i></i><i></i></span><span>SINAL<small>IPTV</small></span></button>
 
+<nav>
+<button id="homeNav" class="active" onclick="showHome()">Início</button>
+<button id="liveNav" onclick="showLive()">Ao vivo</button>
+<button id="listNav" onclick="showList()">Minha lista</button>
+<button onclick="showManager()">Playlist</button>
+</nav>
 
+<div class="headerRight">
+<div class="search">⌕<input id="searchInput" placeholder="Buscar..." autocomplete="off"></div>
+<button class="profile"><span class="avatar">G</span> Guilherme</button>
+</div>
+</header>
 
-▶ PLAY
-✦ HD
-BIBLIOTECA
-Seu conteúdo
-Nenhuma playlist carregada
-📺 Canais0 🎬 Filmes0 📚 Séries0 ▦ Categorias0
-✦
-Sua biblioteca está esperando
-Carregue um arquivo M3U/M3U8 do seu aparelho. O Sinal IPTV organiza os itens por canais, filmes, séries e categorias.
-Adicionar playlist
-SINAL IPTVOrganizador e reprodutor de playlists fornecidas por você.
-BIBLIOTECA
-Adicionar playlist
-×
-↑
-Arraste seu M3U aqui
-ou escolha um arquivo do aparelho
-Escolher arquivo
-Nenhum arquivo selecionado
-Carregar arquivo
-Se a URL da sua operadora bloquear CORS, prefira importar o arquivo M3U/M3U8 salvo no aparelho. O app não remove nem contorna o bloqueio do servidor.
-REPRODUÇÃO
-Reprodução
-×
+<div id="app"></div>
 
-O navegador tentará reproduzir o formato compatível automaticamente.
+<footer>
+<span class="brand footerBrand">
+<span class="mark"><i></i><i></i><i></i></span>
+<span>SINAL<small>IPTV</small></span>
+</span>
+<span>Experiência premium de entretenimento.</span>
+<span>© 2026 Sinal IPTV</span>
+</footer>
 
+<div class="modal" id="playerModal">
+<div class="modalBox">
+<button class="close" onclick="closePlayer()">×</button>
 
+<div class="modalPlayer">
+<video id="modalVideo" controls playsinline></video>
+
+<div id="playerFallback" class="videoPlaceholder hidden">
+<strong>Não foi possível reproduzir esta fonte.</strong>
+<span>Verifique a URL/codec ou tente outro canal.</span>
+</div>
+</div>
+
+<h2 class="modalTitle" id="modalTitle"></h2>
+<p class="modalDesc" id="modalDesc"></p>
+</div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="app.js"></script>
+</body>
+</html>
