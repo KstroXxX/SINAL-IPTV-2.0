@@ -1,2085 +1,1295 @@
-"use strict";
-
-/* =========================================================
-   SINAL IPTV
-   FLUXO:
-   CONEXÃO -> VALIDAR -> CARREGAR -> PAINEL
-   ========================================================= */
-
 (() => {
+  "use strict";
 
-  const STORAGE = {
-    PLAYLISTS: "sinal_iptv_playlists_v3",
-    ACTIVE: "sinal_iptv_active_playlist_v3",
-    FAVORITES: "sinal_iptv_favorites_v3"
+  const $ = (selector, root = document) => root.querySelector(selector);
+  const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
+
+  const STORAGE_KEY = "sinal_iptv_v1";
+  const FAVORITES_KEY = "sinal_iptv_favorites";
+
+  const state = {
+    items: [],
+    filtered: [],
+    category: "all",
+    favoritesOnly: false,
+    playlistName: "",
+    visible: 80,
+    current: null
   };
 
-  let playlists = read(STORAGE.PLAYLISTS, []);
-  let activePlaylistId = read(STORAGE.ACTIVE, null);
-  let favorites = read(STORAGE.FAVORITES, []);
+  const setupView = $("#setupView");
+  const homeView = $("#homeView");
+  const setupStatus = $("#setupStatus");
+  const mediaGrid = $("#mediaGrid");
+  const emptyState = $("#emptyState");
+  const resultCount = $("#resultCount");
+  const sectionTitle = $("#sectionTitle");
+  const categoryNav = $("#categoryNav");
+  const playerModal = $("#playerModal");
+  const video = $("#videoPlayer");
+  const videoFallback = $("#videoFallback");
+  const toast = $("#toast");
 
-  let channels = [];
-  let currentCategory = "Todos";
-  let currentView = "home";
-
-
-  /* =====================================================
-     UTILITÁRIOS
-     ===================================================== */
-
-  function $(selector) {
-    return document.querySelector(selector);
+  function escapeHtml(value = "") {
+    return String(value).replace(/[&<>"']/g, char => ({
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;",
+      "'": "&#039;"
+    }[char]));
   }
 
-  function $$(selector) {
-    return [...document.querySelectorAll(selector)];
+  function showToast(message) {
+    if (!toast) return;
+
+    toast.textContent = message;
+    toast.classList.add("show");
+
+    clearTimeout(showToast.timer);
+
+    showToast.timer = setTimeout(() => {
+      toast.classList.remove("show");
+    }, 2600);
   }
 
-  function read(key, fallback) {
-
+  function getSavedConfig() {
     try {
-
-      const value =
-        localStorage.getItem(key);
-
-      return value
-        ? JSON.parse(value)
-        : fallback;
-
+      return JSON.parse(localStorage.getItem(STORAGE_KEY) || "null");
     } catch {
-
-      return fallback;
-
+      return null;
     }
   }
 
-  function write(key, value) {
+  function saveConfig(config) {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
+    } catch (error) {
+      console.warn("Não foi possível salvar a configuração.", error);
+    }
+  }
+
+  function getFavorites() {
+    try {
+      return JSON.parse(
+        localStorage.getItem(FAVORITES_KEY) || "[]"
+      );
+    } catch {
+      return [];
+    }
+  }
+
+  function isFavorite(id) {
+    return getFavorites().includes(id);
+  }
+
+  function toggleFavorite(id) {
+    const favorites = getFavorites();
+    const index = favorites.indexOf(id);
+
+    if (index >= 0) {
+      favorites.splice(index, 1);
+    } else {
+      favorites.push(id);
+    }
 
     localStorage.setItem(
-      key,
-      JSON.stringify(value)
-    );
-  }
-
-  function id() {
-
-    return (
-      Date.now().toString(36) +
-      Math.random()
-        .toString(36)
-        .slice(2)
-    );
-  }
-
-  function escapeHTML(value) {
-
-    return String(value ?? "")
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;")
-      .replace(/'/g, "&#039;");
-  }
-
-  function toast(message, type = "info") {
-
-    const container =
-      $("#toastContainer");
-
-    const element =
-      document.createElement("div");
-
-    element.className =
-      `toast toast-${type}`;
-
-    element.textContent =
-      message;
-
-    container.appendChild(
-      element
+      FAVORITES_KEY,
+      JSON.stringify(favorites)
     );
 
-    setTimeout(() => {
-
-      element.classList.add(
-        "toast-hide"
-      );
-
-      setTimeout(
-        () => element.remove(),
-        300
-      );
-
-    }, 3500);
+    render();
   }
 
+  function createId(item, index) {
+    const base = [
+      item.title,
+      item.url,
+      item.group,
+      index
+    ].join("|");
 
-  /* =====================================================
-     TELA DE CONEXÃO
-     ===================================================== */
+    let hash = 0;
 
-  function showConnectionScreen() {
-
-    $("#connectionScreen")
-      ?.classList.remove("hidden");
-
-    $("#appShell")
-      ?.classList.add("hidden");
-  }
-
-  function showApp() {
-
-    $("#connectionScreen")
-      ?.classList.add("hidden");
-
-    $("#appShell")
-      ?.classList.remove("hidden");
-  }
-
-
-  /* =====================================================
-     ABAS
-     ===================================================== */
-
-  function setupTabs() {
-
-    $$(".source-tab")
-      .forEach(tab => {
-
-        tab.addEventListener(
-          "click",
-          () => {
-
-            const source =
-              tab.dataset.source;
-
-            $$(".source-tab")
-              .forEach(item =>
-                item.classList.toggle(
-                  "active",
-                  item === tab
-                )
-              );
-
-            $$(".source-panel")
-              .forEach(panel => {
-
-                panel.classList.toggle(
-                  "active",
-                  panel.dataset.sourcePanel === source
-                );
-
-              });
-
-          }
-        );
-
-      });
-  }
-
-
-  /* =====================================================
-     M3U
-     ===================================================== */
-
-  function parseM3U(text) {
-
-    const lines =
-      text
-        .replace(/\r/g, "")
-        .split("\n")
-        .map(line => line.trim());
-
-    const result = [];
-
-    for (
-      let i = 0;
-      i < lines.length;
-      i++
-    ) {
-
-      const line =
-        lines[i];
-
-      if (
-        !line ||
-        !line.startsWith("#EXTINF")
-      ) {
-        continue;
-      }
-
-      const metadata =
-        parseEXTINF(line);
-
-      let streamUrl = "";
-
-      for (
-        let j = i + 1;
-        j < lines.length;
-        j++
-      ) {
-
-        const candidate =
-          lines[j];
-
-        if (
-          !candidate ||
-          candidate.startsWith("#")
-        ) {
-          continue;
-        }
-
-        streamUrl =
-          candidate;
-
-        i = j;
-
-        break;
-      }
-
-      if (!streamUrl) {
-        continue;
-      }
-
-      result.push({
-
-        id:
-          id(),
-
-        name:
-          metadata.name ||
-          "Canal",
-
-        url:
-          streamUrl,
-
-        logo:
-          metadata.logo,
-
-        category:
-          metadata.group ||
-          "Outros",
-
-        tvgId:
-          metadata.tvgId,
-
-        tvgName:
-          metadata.tvgName
-
-      });
-
+    for (let i = 0; i < base.length; i++) {
+      hash = ((hash << 5) - hash) + base.charCodeAt(i);
+      hash |= 0;
     }
 
-    return result;
+    return `sinal-${Math.abs(hash)}`;
   }
 
+  function normalizeUrl(url) {
+    return String(url || "")
+      .trim()
+      .replace(/^['"]|['"]$/g, "");
+  }
 
-  function parseEXTINF(line) {
+  function parseExtInf(line) {
+    const attributes = {};
 
-    const comma =
-      line.indexOf(",");
+    const regex = /([A-Za-z0-9_-]+)="([^"]*)"/g;
 
-    let attributes =
-      comma >= 0
-        ? line.slice(0, comma)
-        : line;
+    let match;
 
-    let name =
-      comma >= 0
-        ? line.slice(comma + 1).trim()
-        : "Canal";
-
-    function attr(key) {
-
-      const regex =
-        new RegExp(
-          `${key}\\s*=\\s*["']([^"']*)["']`,
-          "i"
-        );
-
-      const match =
-        attributes.match(regex);
-
-      return match
-        ? match[1]
-        : "";
+    while ((match = regex.exec(line)) !== null) {
+      attributes[match[1].toLowerCase()] = match[2];
     }
+
+    const commaPosition = line.indexOf(",");
+
+    const title =
+      commaPosition >= 0
+        ? line.slice(commaPosition + 1).trim()
+        : "Sem título";
 
     return {
-
-      name,
-
-      tvgId:
-        attr("tvg-id"),
-
-      tvgName:
-        attr("tvg-name"),
-
-      logo:
-        attr("tvg-logo"),
+      title: title || "Sem título",
 
       group:
-        attr("group-title")
+        attributes["group-title"] ||
+        attributes["group"] ||
+        "Outros",
 
+      logo:
+        attributes["tvg-logo"] ||
+        attributes["logo"] ||
+        "",
+
+      id:
+        attributes["tvg-id"] ||
+        "",
+
+      country:
+        attributes["tvg-country"] ||
+        "",
+
+      language:
+        attributes["tvg-language"] ||
+        ""
     };
   }
 
+  function parseM3U(text) {
+    const lines = String(text || "")
+      .replace(/^\uFEFF/, "")
+      .split(/\r?\n/);
 
-  /* =====================================================
-     URL M3U
-     ===================================================== */
+    const items = [];
 
-  async function loadURLPlaylist() {
+    let metadata = null;
 
-    const name =
-      $("#playlistName")
-        ?.value.trim();
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim();
 
-    const url =
-      $("#playlistUrl")
-        ?.value.trim();
+      if (!line) continue;
 
-    if (!name) {
-
-      toast(
-        "Digite o nome da playlist.",
-        "error"
-      );
-
-      return;
-    }
-
-    if (!url) {
-
-      toast(
-        "Digite a URL da playlist.",
-        "error"
-      );
-
-      return;
-    }
-
-    try {
-      new URL(url);
-    } catch {
-
-      toast(
-        "A URL informada não é válida.",
-        "error"
-      );
-
-      return;
-    }
-
-    setLoading(
-      "#loadURLPlaylist",
-      true,
-      "Carregando..."
-    );
-
-    try {
-
-      const response =
-        await fetch(
-          url,
-          {
-            method: "GET",
-            cache: "no-store"
-          }
-        );
-
-      if (!response.ok) {
-
-        throw new Error(
-          `Servidor respondeu ${response.status}`
-        );
+      if (line.startsWith("#EXTINF")) {
+        metadata = parseExtInf(line);
+        continue;
       }
 
-      const text =
-        await response.text();
-
-      if (
-        !text.includes("#EXTINF") &&
-        !text.includes("#EXTM3U")
-      ) {
-
-        throw new Error(
-          "A URL não parece ser uma playlist M3U."
-        );
-      }
-
-      const parsed =
-        parseM3U(text);
-
-      if (!parsed.length) {
-
-        throw new Error(
-          "A playlist não contém canais reconhecíveis."
-        );
-      }
-
-      const playlist = {
-
-        id:
-          id(),
-
-        name,
-
-        type:
-          "m3u-url",
-
-        url,
-
-        channels:
-          parsed,
-
-        createdAt:
-          Date.now()
-
-      };
-
-      savePlaylist(
-        playlist
-      );
-
-      toast(
-        `${parsed.length} canais carregados.`,
-        "success"
-      );
-
-      enterPlaylist(
-        playlist
-      );
-
-    } catch (error) {
-
-      console.error(error);
-
-      toast(
-        "Não foi possível carregar a playlist. Verifique a URL e se o servidor permite acesso pelo navegador (CORS).",
-        "error"
-      );
-
-    } finally {
-
-      setLoading(
-        "#loadURLPlaylist",
-        false,
-        "Carregar playlist"
-      );
-
-    }
-  }
-
-
-  /* =====================================================
-     ARQUIVO
-     ===================================================== */
-
-  async function loadFilePlaylist() {
-
-    const file =
-      $("#playlistFile")
-        ?.files?.[0];
-
-    if (!file) {
-
-      toast(
-        "Selecione um arquivo M3U.",
-        "error"
-      );
-
-      return;
-    }
-
-    const name =
-      $("#filePlaylistName")
-        ?.value.trim() ||
-      file.name.replace(
-        /\.(m3u8?|txt)$/i,
-        ""
-      );
-
-    setLoading(
-      "#loadFilePlaylist",
-      true,
-      "Lendo arquivo..."
-    );
-
-    try {
-
-      const text =
-        await file.text();
-
-      const parsed =
-        parseM3U(text);
-
-      if (!parsed.length) {
-
-        throw new Error(
-          "Nenhum canal encontrado."
-        );
-      }
-
-      const playlist = {
-
-        id:
-          id(),
-
-        name,
-
-        type:
-          "file",
-
-        fileName:
-          file.name,
-
-        channels:
-          parsed,
-
-        createdAt:
-          Date.now()
-
-      };
-
-      savePlaylist(
-        playlist
-      );
-
-      toast(
-        `${parsed.length} canais carregados.`,
-        "success"
-      );
-
-      enterPlaylist(
-        playlist
-      );
-
-    } catch (error) {
-
-      console.error(error);
-
-      toast(
-        "Não foi possível ler esse arquivo M3U.",
-        "error"
-      );
-
-    } finally {
-
-      setLoading(
-        "#loadFilePlaylist",
-        false,
-        "Carregar playlist"
-      );
-
-    }
-  }
-
-
-  /* =====================================================
-     XTREAM
-     ===================================================== */
-
-  async function loadXtreamPlaylist() {
-
-    const name =
-      $("#xtreamName")
-        ?.value.trim();
-
-    const server =
-      $("#xtreamServer")
-        ?.value.trim()
-        .replace(/\/+$/, "");
-
-    const username =
-      $("#xtreamUsername")
-        ?.value.trim();
-
-    const password =
-      $("#xtreamPassword")
-        ?.value.trim();
-
-    if (
-      !name ||
-      !server ||
-      !username ||
-      !password
-    ) {
-
-      toast(
-        "Preencha todos os campos do Xtream Codes.",
-        "error"
-      );
-
-      return;
-    }
-
-    setLoading(
-      "#loadXtreamPlaylist",
-      true,
-      "Conectando..."
-    );
-
-    try {
-
-      const apiUrl =
-        `${server}/player_api.php` +
-        `?username=${encodeURIComponent(username)}` +
-        `&password=${encodeURIComponent(password)}` +
-        `&action=get_live_streams`;
-
-      const response =
-        await fetch(
-          apiUrl,
-          {
-            cache: "no-store"
-          }
-        );
-
-      if (!response.ok) {
-
-        throw new Error(
-          `Servidor respondeu ${response.status}`
-        );
-      }
-
-      const data =
-        await response.json();
-
-      if (!Array.isArray(data)) {
-
-        throw new Error(
-          "Resposta inválida do servidor Xtream."
-        );
-      }
-
-      const parsed =
-        data.map(item => {
-
-          const streamId =
-            item.stream_id;
-
-          const extension =
-            item.container_extension ||
-            "ts";
-
-          const streamUrl =
-            `${server}/live/` +
-            `${encodeURIComponent(username)}/` +
-            `${encodeURIComponent(password)}/` +
-            `${streamId}.${extension}`;
-
-          return {
-
-            id:
-              String(
-                streamId ||
-                id()
-              ),
-
-            name:
-              item.name ||
-              "Canal",
-
-            url:
-              streamUrl,
-
-            logo:
-              item.stream_icon ||
-              "",
-
-            category:
-              item.category_name ||
-              "TV",
-
-            tvgId:
-              item.epg_channel_id ||
-              ""
-
+      if (!line.startsWith("#") && metadata) {
+        const url = normalizeUrl(line);
+
+        if (url) {
+          const item = {
+            ...metadata,
+            url
           };
 
-        });
+          item.uid = createId(item, items.length);
 
-      if (!parsed.length) {
+          items.push(item);
+        }
 
-        throw new Error(
-          "Nenhum canal foi retornado pelo servidor."
-        );
+        metadata = null;
       }
-
-      const playlist = {
-
-        id:
-          id(),
-
-        name,
-
-        type:
-          "xtream",
-
-        server,
-
-        username,
-
-        password,
-
-        channels:
-          parsed,
-
-        createdAt:
-          Date.now()
-
-      };
-
-      savePlaylist(
-        playlist
-      );
-
-      toast(
-        `${parsed.length} canais carregados.`,
-        "success"
-      );
-
-      enterPlaylist(
-        playlist
-      );
-
-    } catch (error) {
-
-      console.error(error);
-
-      toast(
-        "Não foi possível conectar ao Xtream. Confira servidor, usuário, senha e CORS.",
-        "error"
-      );
-
-    } finally {
-
-      setLoading(
-        "#loadXtreamPlaylist",
-        false,
-        "Conectar e carregar"
-      );
-
-    }
-  }
-
-
-  /* =====================================================
-     PLAYLIST STORAGE
-     ===================================================== */
-
-  function savePlaylist(
-    playlist
-  ) {
-
-    const existing =
-      playlists.findIndex(
-        item =>
-          item.id ===
-          playlist.id
-      );
-
-    if (existing >= 0) {
-
-      playlists[existing] =
-        playlist;
-
-    } else {
-
-      playlists.push(
-        playlist
-      );
-
     }
 
-    write(
-      STORAGE.PLAYLISTS,
-      playlists
-    );
-
-    activePlaylistId =
-      playlist.id;
-
-    write(
-      STORAGE.ACTIVE,
-      activePlaylistId
-    );
+    return items;
   }
 
+  function getCategories() {
+    const counts = new Map();
 
-  function enterPlaylist(
-    playlist
-  ) {
+    state.items.forEach(item => {
+      const category = item.group || "Outros";
 
-    activePlaylistId =
-      playlist.id;
-
-    write(
-      STORAGE.ACTIVE,
-      activePlaylistId
-    );
-
-    channels =
-      Array.isArray(
-        playlist.channels
-      )
-        ? playlist.channels
-        : [];
-
-    $("#currentPlaylistName")
-      .textContent =
-      playlist.name;
-
-    showApp();
-
-    renderAll();
-
-    navigate(
-      "home"
-    );
-  }
-
-
-  /* =====================================================
-     RECUPERAR PLAYLIST
-     ===================================================== */
-
-  function restoreSession() {
-
-    if (!activePlaylistId) {
-
-      showConnectionScreen();
-
-      return;
-    }
-
-    const playlist =
-      playlists.find(
-        item =>
-          item.id ===
-          activePlaylistId
+      counts.set(
+        category,
+        (counts.get(category) || 0) + 1
       );
+    });
 
-    if (!playlist) {
+    return [...counts.entries()]
+      .sort((a, b) => b[1] - a[1]);
+  }
 
-      showConnectionScreen();
+  function getCategoryIcon(category) {
+    const name = String(category).toLowerCase();
 
-      return;
+    if (
+      name.includes("filme") ||
+      name.includes("movie")
+    ) {
+      return "◈";
     }
 
     if (
-      !Array.isArray(
-        playlist.channels
-      ) ||
-      !playlist.channels.length
+      name.includes("série") ||
+      name.includes("serie") ||
+      name.includes("series")
     ) {
-
-      showConnectionScreen();
-
-      return;
+      return "▣";
     }
 
-    channels =
-      playlist.channels;
+    if (
+      name.includes("esporte") ||
+      name.includes("sport")
+    ) {
+      return "◉";
+    }
 
-    $("#currentPlaylistName")
-      .textContent =
-      playlist.name;
+    if (
+      name.includes("infantil") ||
+      name.includes("kids")
+    ) {
+      return "✦";
+    }
 
-    showApp();
+    if (
+      name.includes("notícia") ||
+      name.includes("noticia") ||
+      name.includes("news")
+    ) {
+      return "◌";
+    }
 
-    renderAll();
-
-    navigate(
-      "home"
-    );
+    return "•";
   }
 
+  function renderNavigation() {
+    if (!categoryNav) return;
 
-  /* =====================================================
-     LOADING
-     ===================================================== */
+    const categories = getCategories();
 
-  function setLoading(
-    selector,
-    loading,
-    label
-  ) {
+    categoryNav.innerHTML = `
+      <button
+        class="${
+          state.category === "all" &&
+          !state.favoritesOnly
+            ? "active"
+            : ""
+        }"
+        data-category="all"
+      >
+        ⌂ &nbsp; Início
+      </button>
 
-    const button =
-      $(selector);
+      <button
+        class="${
+          state.favoritesOnly
+            ? "active"
+            : ""
+        }"
+        data-favorites="true"
+      >
+        ☆ &nbsp; Favoritos
+      </button>
 
-    if (!button) return;
+      ${categories.map(([category, count]) => `
+        <button
+          class="${
+            state.category === category &&
+            !state.favoritesOnly
+              ? "active"
+              : ""
+          }"
+          data-category="${escapeHtml(category)}"
+        >
+          ${getCategoryIcon(category)}
+          &nbsp;
+          ${escapeHtml(category)}
 
-    button.disabled =
-      loading;
+          <span style="
+            float:right;
+            opacity:.45;
+          ">
+            ${count.toLocaleString("pt-BR")}
+          </span>
+        </button>
+      `).join("")}
+    `;
 
-    button.innerHTML =
-      loading
-        ? `<span>${label}</span><span>...</span>`
-        : `<span>${label}</span><span>→</span>`;
-  }
+    $$("button", categoryNav).forEach(button => {
 
+      button.addEventListener("click", () => {
 
-  /* =====================================================
-     NAVEGAÇÃO
-     ===================================================== */
+        if (button.dataset.favorites) {
 
-  function navigate(
-    view
-  ) {
+          state.favoritesOnly = true;
+          state.category = "all";
 
-    currentView =
-      view;
+        } else {
 
-    $$(".view")
-      .forEach(section => {
+          state.favoritesOnly = false;
+          state.category =
+            button.dataset.category || "all";
+        }
 
-        section.classList.toggle(
-          "active",
-          section.id ===
-          `${view}View`
-        );
+        state.visible = 80;
 
+        renderNavigation();
+        render();
+
+        const sidebar = $("#sidebar");
+
+        if (sidebar) {
+          sidebar.classList.remove("open");
+        }
       });
-
-    $$(".nav-item[data-view]")
-      .forEach(button => {
-
-        button.classList.toggle(
-          "active",
-          button.dataset.view === view
-        );
-
-      });
-
-    const titles = {
-
-      home:
-        "Início",
-
-      channels:
-        "Canais",
-
-      favorites:
-        "Favoritos",
-
-      playlists:
-        "Playlists"
-
-    };
-
-    $("#pageTitle")
-      .textContent =
-      titles[view] ||
-      "Sinal IPTV";
-
-    if (view === "channels") {
-      renderChannels();
-    }
-
-    if (view === "favorites") {
-      renderFavorites();
-    }
-
-    if (view === "playlists") {
-      renderPlaylists();
-    }
-
-    window.scrollTo({
-      top: 0,
-      behavior: "smooth"
     });
   }
 
-
-  /* =====================================================
-     CATEGORIAS
-     ===================================================== */
-
-  function categories() {
-
-    const list =
-      channels
-        .map(
-          channel =>
-            channel.category ||
-            "Outros"
-        )
-        .filter(Boolean);
-
-    return [
-      "Todos",
-      ...new Set(list)
-    ];
-  }
-
-
-  function renderCategories() {
-
-    const container =
-      $("#categoryBar");
-
-    if (!container) return;
-
-    const list =
-      categories();
-
-    if (
-      !list.includes(
-        currentCategory
-      )
-    ) {
-
-      currentCategory =
-        "Todos";
-
-    }
-
-    container.innerHTML =
-      list.map(
-        category => `
-
-          <button
-            class="category-button ${
-              category === currentCategory
-                ? "active"
-                : ""
-            }"
-            data-category="${escapeHTML(category)}"
-          >
-            ${escapeHTML(category)}
-          </button>
-
-        `
-      ).join("");
-
-    $$(".category-button")
-      .forEach(button => {
-
-        button.addEventListener(
-          "click",
-          () => {
-
-            currentCategory =
-              button.dataset.category;
-
-            renderCategories();
-            renderChannels();
-
-          }
-        );
-
-      });
-  }
-
-
-  /* =====================================================
-     BUSCA
-     ===================================================== */
-
-  function filteredChannels() {
-
-    const search =
-      $("#searchInput")
-        ?.value
-        .trim()
-        .toLowerCase() ||
-      "";
-
-    return channels.filter(
-      channel => {
-
-        const category =
-          channel.category ||
-          "Outros";
-
-        const categoryOK =
-          currentCategory === "Todos" ||
-          category === currentCategory;
-
-        const searchOK =
-          !search ||
-          String(
-            channel.name
-          )
-            .toLowerCase()
-            .includes(search);
-
-        return (
-          categoryOK &&
-          searchOK
-        );
-
-      }
-    );
-  }
-
-
-  /* =====================================================
-     FAVORITOS
-     ===================================================== */
-
-  function channelKey(
-    channel
-  ) {
-
-    return (
-      channel.id ||
-      `${channel.name}|${channel.url}`
-    );
-
-  }
-
-  function favorite(
-    channel
-  ) {
-
-    const key =
-      channelKey(channel);
-
-    if (
-      favorites.includes(key)
-    ) {
-
-      favorites =
-        favorites.filter(
-          item =>
-            item !== key
-        );
-
-    } else {
-
-      favorites.push(key);
-
-    }
-
-    write(
-      STORAGE.FAVORITES,
-      favorites
-    );
-
-    renderChannels();
-    renderFavorites();
-  }
-
-  function isFavorite(
-    channel
-  ) {
-
-    return favorites.includes(
-      channelKey(channel)
-    );
-
-  }
-
-
-  /* =====================================================
-     CARD DE CANAL
-     ===================================================== */
-
-  function channelCard(
-    channel
-  ) {
-
-    const fav =
-      isFavorite(channel);
-
-    const logo =
-      channel.logo;
-
-    return `
-
-      <article
-        class="channel-card"
-        data-channel="${escapeHTML(
-          channelKey(channel)
-        )}"
-      >
-
-        <div
-          class="channel-logo"
-          ${
-            logo
-              ? `style="background-image:url('${escapeHTML(
-                  logo
-                )}')"`
-              : ""
-          }
-        >
-
-          ${
-            logo
-              ? ""
-              : `<span>
-                  ${escapeHTML(
-                    String(
-                      channel.name ||
-                      "TV"
-                    )
-                      .slice(0,2)
-                      .toUpperCase()
-                  )}
-                </span>`
-          }
-
-          <button
-            class="favorite-button ${
-              fav
-                ? "is-favorite"
-                : ""
-            }"
-            data-action="favorite"
-          >
-            ${
-              fav
-                ? "♥"
-                : "♡"
-            }
-          </button>
-
-        </div>
-
-        <div class="channel-info">
-
-          <h3>
-            ${escapeHTML(
-              channel.name
-            )}
-          </h3>
-
-          <span>
-            ${escapeHTML(
-              channel.category ||
-              "TV"
-            )}
-          </span>
-
-        </div>
-
-        <button
-          class="watch-button"
-          data-action="play"
-        >
-          Assistir
-        </button>
-
-      </article>
-
-    `;
-  }
-
-
-  /* =====================================================
-     RENDER CANAIS
-     ===================================================== */
-
-  function renderChannels() {
-
-    const grid =
-      $("#channelGrid");
-
-    const empty =
-      $("#channelsEmpty");
-
-    if (!grid) return;
-
-    const list =
-      filteredChannels();
-
-    grid.innerHTML =
-      list
-        .map(channelCard)
-        .join("");
-
-    grid.classList.toggle(
-      "hidden",
-      list.length === 0
-    );
-
-    empty.classList.toggle(
-      "hidden",
-      list.length > 0
-    );
-
-    $("#channelCounter")
-      .textContent =
-      `${channels.length} ${
-        channels.length === 1
-          ? "canal"
-          : "canais"
-      } disponíveis`;
-
-    bindChannelEvents();
-  }
-
-
-  /* =====================================================
-     FAVORITOS
-     ===================================================== */
-
-  function renderFavorites() {
-
-    const grid =
-      $("#favoriteGrid");
-
-    const empty =
-      $("#favoritesEmpty");
-
-    if (!grid) return;
-
-    const list =
-      channels.filter(
-        isFavorite
+  function applyFilters() {
+    const searchInput = $("#searchInput");
+
+    const query = searchInput
+      ? searchInput.value.trim().toLowerCase()
+      : "";
+
+    state.filtered = state.items.filter(item => {
+
+      const categoryMatches =
+        state.category === "all" ||
+        item.group === state.category;
+
+      const favoriteMatches =
+        !state.favoritesOnly ||
+        isFavorite(item.uid);
+
+      const searchMatches =
+        !query ||
+        [
+          item.title,
+          item.group,
+          item.country,
+          item.language
+        ]
+          .join(" ")
+          .toLowerCase()
+          .includes(query);
+
+      return (
+        categoryMatches &&
+        favoriteMatches &&
+        searchMatches
       );
-
-    grid.innerHTML =
-      list
-        .map(channelCard)
-        .join("");
-
-    grid.classList.toggle(
-      "hidden",
-      list.length === 0
-    );
-
-    empty.classList.toggle(
-      "hidden",
-      list.length > 0
-    );
-
-    bindChannelEvents();
+    });
   }
 
+  function createCard(item) {
+    const favorite = isFavorite(item.uid);
 
-  /* =====================================================
-     EVENTOS DOS CANAIS
-     ===================================================== */
-
-  function bindChannelEvents() {
-
-    $$(".channel-card")
-      .forEach(card => {
-
-        card.addEventListener(
-          "click",
-          event => {
-
-            const action =
-              event.target
-                .closest(
-                  "[data-action]"
-                )
-                ?.dataset.action;
-
-            const key =
-              card.dataset.channel;
-
-            const channel =
-              channels.find(
-                item =>
-                  channelKey(item) === key
-              );
-
-            if (!channel) return;
-
-            if (
-              action ===
-              "favorite"
-            ) {
-
-              event.stopPropagation();
-
-              favorite(
-                channel
-              );
-
-              return;
-            }
-
-            openPlayer(
-              channel
-            );
-
-          }
-        );
-
-      });
-  }
-
-
-  /* =====================================================
-     PLAYLISTS
-     ===================================================== */
-
-  function playlistCard(
-    playlist
-  ) {
-
-    const active =
-      playlist.id ===
-      activePlaylistId;
-
-    const count =
-      Array.isArray(
-        playlist.channels
-      )
-        ? playlist.channels.length
-        : 0;
+    const poster = item.logo
+      ? `
+        <img
+          loading="lazy"
+          src="${escapeHtml(item.logo)}"
+          alt=""
+          onerror="this.style.display='none'"
+        >
+      `
+      : `
+        <div class="poster-placeholder">
+          ${getCategoryIcon(item.group)}
+        </div>
+      `;
 
     return `
-
-      <article
-        class="playlist-card ${
-          active
-            ? "selected"
-            : ""
-        }"
+      <button
+        class="media-card"
+        data-id="${escapeHtml(item.uid)}"
       >
 
-        <div class="playlist-cover">
+        <div class="poster">
 
-          <div class="playlist-logo">
-            S
+          ${poster}
+
+          <div class="play-overlay">
+            <div class="play-circle">
+              ▶
+            </div>
           </div>
 
-          <span>
-            ${
-              playlist.type === "xtream"
-                ? "XTREAM"
-                : playlist.type === "file"
-                  ? "M3U • ARQUIVO"
-                  : "M3U • URL"
-            }
+          <span
+            class="favorite-badge"
+            data-id="${escapeHtml(item.uid)}"
+            title="Favoritar"
+          >
+            ${favorite ? "★" : "☆"}
           </span>
 
         </div>
 
-        <div class="playlist-details">
+        <div class="card-info">
 
-          <h3>
-            ${escapeHTML(
-              playlist.name
-            )}
-          </h3>
+          <div class="card-title">
+            ${escapeHtml(item.title)}
+          </div>
 
-          <p>
-            ${count} ${
-              count === 1
-                ? "canal"
-                : "canais"
-            }
-          </p>
+          <div class="card-meta">
+            ${escapeHtml(item.group)}
+          </div>
 
         </div>
 
-        <div class="playlist-actions">
-
-          <button
-            class="secondary-button"
-            data-playlist-select="${escapeHTML(
-              playlist.id
-            )}"
-          >
-            ${
-              active
-                ? "Ativa"
-                : "Selecionar"
-            }
-          </button>
-
-          <button
-            class="danger-button"
-            data-playlist-delete="${escapeHTML(
-              playlist.id
-            )}"
-          >
-            ×
-          </button>
-
-        </div>
-
-      </article>
-
+      </button>
     `;
   }
 
+  function render() {
+    applyFilters();
 
-  function renderPlaylists() {
-
-    const grid =
-      $("#playlistGrid");
-
-    if (!grid) return;
-
-    grid.innerHTML =
-      playlists
-        .map(
-          playlistCard
-        )
-        .join("");
-
-    grid
-      .querySelectorAll(
-        "[data-playlist-select]"
-      )
-      .forEach(button => {
-
-        button.addEventListener(
-          "click",
-          () => {
-
-            const playlist =
-              playlists.find(
-                item =>
-                  item.id ===
-                  button.dataset.playlistSelect
-              );
-
-            if (!playlist) return;
-
-            activePlaylistId =
-              playlist.id;
-
-            channels =
-              playlist.channels ||
-              [];
-
-            write(
-              STORAGE.ACTIVE,
-              activePlaylistId
-            );
-
-            $("#currentPlaylistName")
-              .textContent =
-              playlist.name;
-
-            renderAll();
-
-            navigate(
-              "home"
-            );
-
-          }
-        );
-
-      });
-
-    grid
-      .querySelectorAll(
-        "[data-playlist-delete]"
-      )
-      .forEach(button => {
-
-        button.addEventListener(
-          "click",
-          () => {
-
-            deletePlaylist(
-              button.dataset.playlistDelete
-            );
-
-          }
-        );
-
-      });
-  }
-
-
-  function deletePlaylist(
-    playlistId
-  ) {
-
-    const playlist =
-      playlists.find(
-        item =>
-          item.id ===
-          playlistId
+    const visibleItems =
+      state.filtered.slice(
+        0,
+        state.visible
       );
 
-    if (!playlist) return;
-
-    const confirmed =
-      confirm(
-        `Deseja remover "${playlist.name}"?`
-      );
-
-    if (!confirmed) return;
-
-    playlists =
-      playlists.filter(
-        item =>
-          item.id !==
-          playlistId
-      );
-
-    write(
-      STORAGE.PLAYLISTS,
-      playlists
-    );
-
-    if (
-      activePlaylistId ===
-      playlistId
-    ) {
-
-      activePlaylistId =
-        null;
-
-      channels = [];
-
-      write(
-        STORAGE.ACTIVE,
-        null
-      );
-
-      showConnectionScreen();
-
+    if (resultCount) {
+      resultCount.textContent =
+        `${state.filtered.length.toLocaleString("pt-BR")} itens`;
     }
 
-    renderAll();
-
-    toast(
-      "Playlist removida.",
-      "success"
-    );
-  }
-
-
-  /* =====================================================
-     HOME
-     ===================================================== */
-
-  function renderHome() {
-
-    const stats =
-      $("#homeStats");
-
-    if (!stats) return;
-
-    const categoriesCount =
-      new Set(
-        channels.map(
-          channel =>
-            channel.category ||
-            "Outros"
-        )
-      ).size;
-
-    stats.innerHTML = `
-
-      <div class="stat-card">
-        <span>CANAIS</span>
-        <strong>
-          ${channels.length}
-        </strong>
-      </div>
-
-      <div class="stat-card">
-        <span>CATEGORIAS</span>
-        <strong>
-          ${categoriesCount}
-        </strong>
-      </div>
-
-      <div class="stat-card">
-        <span>FAVORITOS</span>
-        <strong>
-          ${
-            channels.filter(
-              isFavorite
-            ).length
-          }
-        </strong>
-      </div>
-
-    `;
-  }
-
-
-  /* =====================================================
-     RENDER GERAL
-     ===================================================== */
-
-  function renderAll() {
-
-    renderHome();
-
-    renderCategories();
-
-    renderChannels();
-
-    renderFavorites();
-
-    renderPlaylists();
-
-  }
-
-
-  /* =====================================================
-     PLAYER
-     ===================================================== */
-
-  function openPlayer(
-    channel
-  ) {
-
-    const modal =
-      $("#playerModal");
-
-    const video =
-      $("#videoPlayer");
-
-    const title =
-      $("#playerTitle");
-
-    const status =
-      $("#playerStatus");
-
-    if (!channel?.url) {
-
-      toast(
-        "Esse canal não possui uma URL de transmissão.",
-        "error"
-      );
-
-      return;
+    if (sectionTitle) {
+      sectionTitle.textContent =
+        state.favoritesOnly
+          ? "Seus favoritos"
+          : state.category === "all"
+            ? "Destaques"
+            : state.category;
     }
 
-    modal.classList.remove(
-      "hidden"
-    );
+    if (emptyState) {
+      emptyState.classList.toggle(
+        "hidden",
+        state.filtered.length > 0
+      );
+    }
 
-    title.textContent =
-      channel.name;
+    if (mediaGrid) {
+      mediaGrid.innerHTML =
+        visibleItems
+          .map(createCard)
+          .join("");
+    }
 
-    status.textContent =
-      "Conectando...";
+    const loadMore = $("#loadMore");
 
-    video.src =
-      channel.url;
+    if (loadMore) {
+      loadMore.classList.toggle(
+        "hidden",
+        state.visible >= state.filtered.length
+      );
+    }
 
-    video.load();
+    $$(".media-card").forEach(card => {
 
-    video.play()
-      .then(() => {
+      card.addEventListener("click", event => {
 
-        status.textContent =
-          "Reproduzindo";
+        if (
+          event.target.closest(
+            ".favorite-badge"
+          )
+        ) {
+          return;
+        }
 
-      })
-      .catch(() => {
-
-        status.textContent =
-          "A transmissão foi carregada. Pressione play se necessário.";
-
-      });
-
-  }
-
-
-  function closePlayer() {
-
-    const modal =
-      $("#playerModal");
-
-    const video =
-      $("#videoPlayer");
-
-    video.pause();
-
-    video.removeAttribute(
-      "src"
-    );
-
-    video.load();
-
-    modal.classList.add(
-      "hidden"
-    );
-  }
-
-
-  /* =====================================================
-     PESQUISA
-     ===================================================== */
-
-  function setupSearch() {
-
-    $("#searchToggle")
-      ?.addEventListener(
-        "click",
-        () => {
-
-          const wrapper =
-            $("#searchWrapper");
-
-          wrapper.classList.toggle(
-            "hidden"
+        const item =
+          state.items.find(
+            x =>
+              x.uid ===
+              card.dataset.id
           );
 
-          if (
-            !wrapper.classList.contains(
-              "hidden"
-            )
-          ) {
-
-            $("#searchInput")
-              .focus();
-
-          }
-
+        if (item) {
+          openPlayer(item);
         }
-      );
+      });
+    });
 
-    $("#searchInput")
-      ?.addEventListener(
-        "input",
-        () => {
+    $$(".favorite-badge").forEach(button => {
 
-          if (
-            currentView !==
-            "channels"
-          ) {
-
-            navigate(
-              "channels"
-            );
-
-          } else {
-
-            renderChannels();
-
-          }
-
-        }
-      );
-  }
-
-
-  /* =====================================================
-     EVENTOS PRINCIPAIS
-     ===================================================== */
-
-  function setupEvents() {
-
-    setupTabs();
-
-    setupSearch();
-
-
-    /* Carregar URL */
-
-    $("#loadURLPlaylist")
-      ?.addEventListener(
+      button.addEventListener(
         "click",
-        loadURLPlaylist
-      );
-
-
-    /* Carregar arquivo */
-
-    $("#loadFilePlaylist")
-      ?.addEventListener(
-        "click",
-        loadFilePlaylist
-      );
-
-
-    /* Xtream */
-
-    $("#loadXtreamPlaylist")
-      ?.addEventListener(
-        "click",
-        loadXtreamPlaylist
-      );
-
-
-    /* Arquivo escolhido */
-
-    $("#playlistFile")
-      ?.addEventListener(
-        "change",
         event => {
 
-          const file =
-            event.target.files?.[0];
+          event.stopPropagation();
 
-          $("#selectedFileName")
-            .textContent =
+          toggleFavorite(
+            button.dataset.id
+          );
+        }
+      );
+    });
+  }
+
+  function openPlayer(item) {
+    state.current = item;
+
+    const playerTitle =
+      $("#playerTitle");
+
+    const playerFavorite =
+      $("#playerFavorite");
+
+    if (playerTitle) {
+      playerTitle.textContent =
+        item.title;
+    }
+
+    if (playerFavorite) {
+      playerFavorite.textContent =
+        isFavorite(item.uid)
+          ? "★ Remover dos favoritos"
+          : "☆ Favoritar";
+    }
+
+    if (videoFallback) {
+      videoFallback.classList.add(
+        "hidden"
+      );
+    }
+
+    if (video) {
+      video.classList.remove(
+        "hidden"
+      );
+
+      video.pause();
+
+      video.src = item.url;
+
+      video.load();
+
+      video.play().catch(() => {});
+    }
+
+    if (playerModal) {
+      playerModal.classList.remove(
+        "hidden"
+      );
+    }
+  }
+
+  function closePlayer() {
+    if (video) {
+      video.pause();
+
+      video.removeAttribute("src");
+
+      video.load();
+    }
+
+    if (playerModal) {
+      playerModal.classList.add(
+        "hidden"
+      );
+    }
+
+    state.current = null;
+  }
+
+  function showHome(items, playlistName) {
+
+    if (!items.length) {
+      throw new Error(
+        "Nenhum conteúdo válido foi encontrado na playlist."
+      );
+    }
+
+    state.items = items;
+
+    state.playlistName =
+      playlistName ||
+      "Minha playlist";
+
+    state.category = "all";
+
+    state.favoritesOnly = false;
+
+    state.visible = 80;
+
+    setupView.classList.add(
+      "hidden"
+    );
+
+    homeView.classList.remove(
+      "hidden"
+    );
+
+    const heroTitle =
+      $("#heroTitle");
+
+    const heroText =
+      $("#heroText");
+
+    if (heroTitle) {
+      heroTitle.textContent =
+        state.playlistName;
+    }
+
+    if (heroText) {
+      heroText.textContent =
+        `${items.length.toLocaleString(
+          "pt-BR"
+        )} conteúdos disponíveis para você.`;
+    }
+
+    renderNavigation();
+    render();
+  }
+
+  async function loadFromFile(
+    file,
+    name
+  ) {
+
+    setupStatus.textContent =
+      "Lendo sua playlist…";
+
+    const text =
+      await file.text();
+
+    const items =
+      parseM3U(text);
+
+    saveConfig({
+      type: "file",
+      name:
+        name ||
+        file.name
+    });
+
+    showHome(
+      items,
+      name ||
+      file.name
+    );
+  }
+
+  async function loadFromUrl(
+    url,
+    name
+  ) {
+
+    url = normalizeUrl(url);
+
+    if (!url) {
+      throw new Error(
+        "Digite a URL da playlist."
+      );
+    }
+
+    setupStatus.textContent =
+      "Conectando à playlist…";
+
+    const response =
+      await fetch(url);
+
+    if (!response.ok) {
+      throw new Error(
+        `Não foi possível acessar a playlist (${response.status}).`
+      );
+    }
+
+    const text =
+      await response.text();
+
+    const items =
+      parseM3U(text);
+
+    saveConfig({
+      type: "url",
+      name:
+        name ||
+        "Minha playlist",
+      url
+    });
+
+    showHome(
+      items,
+      name ||
+      "Minha playlist"
+    );
+  }
+
+  async function loadXtream(
+    server,
+    username,
+    password,
+    name
+  ) {
+
+    server =
+      normalizeUrl(server)
+        .replace(/\/+$/, "");
+
+    username =
+      String(username || "").trim();
+
+    password =
+      String(password || "");
+
+    if (!server) {
+      throw new Error(
+        "Digite o endereço do servidor."
+      );
+    }
+
+    if (!username) {
+      throw new Error(
+        "Digite o usuário."
+      );
+    }
+
+    if (!password) {
+      throw new Error(
+        "Digite a senha."
+      );
+    }
+
+    const playlistUrl =
+      `${server}/get.php` +
+      `?username=${encodeURIComponent(username)}` +
+      `&password=${encodeURIComponent(password)}` +
+      `&type=m3u_plus` +
+      `&output=ts`;
+
+    await loadFromUrl(
+      playlistUrl,
+      name || "Minha TV"
+    );
+
+    saveConfig({
+      type: "xtream",
+      name:
+        name ||
+        "Minha TV",
+      server,
+      username,
+      password
+    });
+  }
+
+  function showError(error) {
+
+    console.error(error);
+
+    if (setupStatus) {
+      setupStatus.textContent =
+        error?.message ||
+        "Não foi possível carregar a playlist.";
+    }
+
+    showToast(
+      error?.message ||
+      "Erro ao carregar playlist."
+    );
+  }
+
+  /* =========================
+     ABAS DE CONEXÃO
+  ========================= */
+
+  $$(".source-tab").forEach(tab => {
+
+    tab.addEventListener(
+      "click",
+      () => {
+
+        $$(".source-tab")
+          .forEach(item =>
+            item.classList.remove(
+              "active"
+            )
+          );
+
+        $$(".source-panel")
+          .forEach(panel =>
+            panel.classList.remove(
+              "active"
+            )
+          );
+
+        tab.classList.add(
+          "active"
+        );
+
+        const panel =
+          $(`#${tab.dataset.source}Form`);
+
+        if (panel) {
+          panel.classList.add(
+            "active"
+          );
+        }
+
+        if (setupStatus) {
+          setupStatus.textContent =
+            "";
+        }
+      }
+    );
+  });
+
+  /* =========================
+     ARQUIVO M3U
+  ========================= */
+
+  const m3uFile =
+    $("#m3uFile");
+
+  if (m3uFile) {
+
+    m3uFile.addEventListener(
+      "change",
+      event => {
+
+        const file =
+          event.target.files[0];
+
+        const fileLabel =
+          $("#fileLabel");
+
+        if (fileLabel) {
+          fileLabel.textContent =
             file
               ? file.name
               : "M3U ou M3U8";
-
         }
-      );
+      }
+    );
+  }
 
+  /* =========================
+     FORM URL M3U
+  ========================= */
 
-    /* Navegação */
+  const urlForm =
+    $("#urlForm");
 
-    $$(".nav-item[data-view]")
-      .forEach(button => {
+  if (urlForm) {
 
-        button.addEventListener(
-          "click",
-          () => {
+    urlForm.addEventListener(
+      "submit",
+      async event => {
 
-            navigate(
-              button.dataset.view
-            );
+        event.preventDefault();
 
-          }
-        );
+        try {
 
-      });
-
-
-    /* Trocar playlist */
-
-    $("#changePlaylist")
-      ?.addEventListener(
-        "click",
-        () => {
-
-          showConnectionScreen();
-
-        }
-      );
-
-
-    /* Adicionar outra */
-
-    $("#addAnotherPlaylist")
-      ?.addEventListener(
-        "click",
-        () => {
-
-          showConnectionScreen();
-
-        }
-      );
-
-
-    /* Home */
-
-    $("#goChannels")
-      ?.addEventListener(
-        "click",
-        () => {
-
-          navigate(
-            "channels"
+          await loadFromUrl(
+            $("#m3uUrl").value,
+            $("#urlName").value
           );
 
+        } catch (error) {
+
+          showError(error);
         }
-      );
+      }
+    );
+  }
 
+  /* =========================
+     FORM ARQUIVO
+  ========================= */
 
-    $("#goPlaylists")
-      ?.addEventListener(
-        "click",
-        () => {
+  const fileForm =
+    $("#fileForm");
 
-          navigate(
-            "playlists"
+  if (fileForm) {
+
+    fileForm.addEventListener(
+      "submit",
+      async event => {
+
+        event.preventDefault();
+
+        const file =
+          $("#m3uFile")
+            ?.files?.[0];
+
+        if (!file) {
+
+          showError(
+            new Error(
+              "Selecione um arquivo M3U."
+            )
           );
 
+          return;
         }
-      );
 
+        try {
 
-    /* Player */
+          await loadFromFile(
+            file,
+            $("#fileName").value
+          );
 
-    $("#closePlayer")
-      ?.addEventListener(
-        "click",
-        closePlayer
-      );
+        } catch (error) {
 
-
-    $("#playerModal")
-      ?.addEventListener(
-        "click",
-        event => {
-
-          if (
-            event.target.id ===
-            "playerModal"
-          ) {
-
-            closePlayer();
-
-          }
-
+          showError(error);
         }
-      );
+      }
+    );
+  }
 
+  /* =========================
+     FORM XTREAM CODES
+  ========================= */
 
-    /* Mobile */
+  const xtreamForm =
+    $("#xtreamForm");
 
-    $("#mobileMenuBtn")
-      ?.addEventListener(
-        "click",
-        () => {
+  if (xtreamForm) {
 
-          $(".sidebar")
-            ?.classList.toggle(
-              "mobile-open"
-            );
+    xtreamForm.addEventListener(
+      "submit",
+      async event => {
 
+        event.preventDefault();
+
+        try {
+
+          await loadXtream(
+            $("#xtServer").value,
+            $("#xtUser").value,
+            $("#xtPass").value,
+            $("#xtName").value
+          );
+
+        } catch (error) {
+
+          showError(error);
         }
-      );
+      }
+    );
+  }
 
+  /* =========================
+     BUSCA
+  ========================= */
 
-    /* ESC */
+  const searchInput =
+    $("#searchInput");
 
-    document.addEventListener(
-      "keydown",
+  if (searchInput) {
+
+    searchInput.addEventListener(
+      "input",
+      () => {
+
+        state.visible = 80;
+
+        render();
+      }
+    );
+  }
+
+  /* =========================
+     CARREGAR MAIS
+  ========================= */
+
+  const loadMore =
+    $("#loadMore");
+
+  if (loadMore) {
+
+    loadMore.addEventListener(
+      "click",
+      () => {
+
+        state.visible += 80;
+
+        render();
+      }
+    );
+  }
+
+  /* =========================
+     FAVORITOS
+  ========================= */
+
+  const favoritesButton =
+    $("#favoritesBtn");
+
+  if (favoritesButton) {
+
+    favoritesButton.addEventListener(
+      "click",
+      () => {
+
+        state.favoritesOnly =
+          !state.favoritesOnly;
+
+        state.category =
+          "all";
+
+        renderNavigation();
+        render();
+      }
+    );
+  }
+
+  /* =========================
+     MENU MOBILE
+  ========================= */
+
+  const mobileMenu =
+    $("#mobileMenu");
+
+  if (mobileMenu) {
+
+    mobileMenu.addEventListener(
+      "click",
+      () => {
+
+        const sidebar =
+          $("#sidebar");
+
+        if (sidebar) {
+          sidebar.classList.toggle(
+            "open"
+          );
+        }
+      }
+    );
+  }
+
+  /* =========================
+     FECHAR PLAYER
+  ========================= */
+
+  const closePlayerButton =
+    $("#closePlayer");
+
+  if (closePlayerButton) {
+
+    closePlayerButton.addEventListener(
+      "click",
+      closePlayer
+    );
+  }
+
+  if (playerModal) {
+
+    playerModal.addEventListener(
+      "click",
       event => {
 
         if (
-          event.key ===
-          "Escape"
+          event.target ===
+          playerModal
         ) {
-
           closePlayer();
-
         }
-
       }
     );
-
   }
 
+  /* =========================
+     FAVORITAR NO PLAYER
+  ========================= */
 
-  /* =====================================================
-     INICIALIZAÇÃO
-     ===================================================== */
+  const playerFavorite =
+    $("#playerFavorite");
 
-  function init() {
+  if (playerFavorite) {
 
-    setupEvents();
+    playerFavorite.addEventListener(
+      "click",
+      () => {
 
-    restoreSession();
+        if (!state.current) {
+          return;
+        }
 
-  }
+        toggleFavorite(
+          state.current.uid
+        );
 
-
-  if (
-    document.readyState ===
-    "loading"
-  ) {
-
-    document.addEventListener(
-      "DOMContentLoaded",
-      init
+        playerFavorite.textContent =
+          isFavorite(
+            state.current.uid
+          )
+            ? "★ Remover dos favoritos"
+            : "☆ Favoritar";
+      }
     );
+  }
 
-  } else {
+  /* =========================
+     TROCAR PLAYLIST
+  ========================= */
 
-    init();
+  const changePlaylist =
+    $("#changePlaylist");
 
+  if (changePlaylist) {
+
+    changePlaylist.addEventListener(
+      "click",
+      () => {
+
+        homeView.classList.add(
+          "hidden"
+        );
+
+        setupView.classList.remove(
+          "hidden"
+        );
+
+        if (setupStatus) {
+          setupStatus.textContent =
+            "";
+        }
+      }
+    );
+  }
+
+  /* =========================
+     HERO
+  ========================= */
+
+  const heroPlay =
+    $("#heroPlay");
+
+  if (heroPlay) {
+
+    heroPlay.addEventListener(
+      "click",
+      () => {
+
+        const first =
+          state.filtered[0] ||
+          state.items[0];
+
+        if (first) {
+          openPlayer(first);
+        }
+      }
+    );
+  }
+
+  /* =========================
+     ERRO DE PLAYER
+  ========================= */
+
+  if (video) {
+
+    video.addEventListener(
+      "error",
+      () => {
+
+        video.classList.add(
+          "hidden"
+        );
+
+        if (videoFallback) {
+          videoFallback.classList.remove(
+            "hidden"
+          );
+        }
+      }
+    );
+  }
+
+  /* =========================
+     TECLA ESC
+  ========================= */
+
+  document.addEventListener(
+    "keydown",
+    event => {
+
+      if (
+        event.key === "Escape"
+      ) {
+        closePlayer();
+      }
+    }
+  );
+
+  /* =========================
+     CONFIGURAÇÃO SALVA
+  ========================= */
+
+  const saved =
+    getSavedConfig();
+
+  if (saved) {
+
+    if (
+      saved.type === "url"
+    ) {
+
+      const urlName =
+        $("#urlName");
+
+      const m3uUrl =
+        $("#m3uUrl");
+
+      if (urlName) {
+        urlName.value =
+          saved.name || "";
+      }
+
+      if (m3uUrl) {
+        m3uUrl.value =
+          saved.url || "";
+      }
+
+    } else if (
+      saved.type === "xtream"
+    ) {
+
+      const xtName =
+        $("#xtName");
+
+      const xtServer =
+        $("#xtServer");
+
+      const xtUser =
+        $("#xtUser");
+
+      const xtPass =
+        $("#xtPass");
+
+      if (xtName) {
+        xtName.value =
+          saved.name || "";
+      }
+
+      if (xtServer) {
+        xtServer.value =
+          saved.server || "";
+      }
+
+      if (xtUser) {
+        xtUser.value =
+          saved.username || "";
+      }
+
+      if (xtPass) {
+        xtPass.value =
+          saved.password || "";
+      }
+    }
   }
 
 })();
