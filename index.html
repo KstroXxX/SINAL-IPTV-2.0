@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1.0">
+  <meta name="theme-color" content="#09090b">
+  <title>Sinal IPTV</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div id="app">
+    <header class="topbar">
+      <div class="brand"><span class="logo">S</span><span>SINAL <b>IPTV</b></span></div>
+      <nav>
+        <button class="nav-btn active" data-view="home">Início</button>
+        <button class="nav-btn" data-view="live">TV ao vivo</button>
+        <button class="nav-btn" data-view="movies">Filmes</button>
+        <button class="nav-btn" data-view="series">Séries</button>
+      </nav>
+      <div class="actions">
+        <button id="searchBtn" class="icon-btn" title="Buscar">⌕</button>
+        <button id="playlistBtn" class="primary">+ Playlist</button>
+      </div>
+    </header>
+
+    <main>
+      <section id="hero" class="hero">
+        <div class="hero-glow"></div>
+        <div class="hero-copy">
+          <div class="eyebrow">SINAL IPTV • SUA CENTRAL DE ENTRETENIMENTO</div>
+          <h1>Seu conteúdo.<br><span>Do seu jeito.</span></h1>
+          <p>Adicione sua playlist e transforme o navegador em uma experiência de streaming premium.</p>
+          <div class="hero-actions">
+            <button id="heroPlaylist" class="cta">Adicionar playlist</button>
+            <button id="exploreBtn" class="ghost">Explorar</button>
+          </div>
+        </div>
+        <div class="orb orb1"></div><div class="orb orb2"></div>
+      </section>
+
+      <section id="content" class="content">
+        <div class="section-head">
+          <div><span class="eyebrow">BIBLIOTECA</span><h2 id="sectionTitle">Comece adicionando sua playlist</h2></div>
+          <div id="stats" class="stats"></div>
+        </div>
+        <div id="empty" class="empty">
+          <div class="empty-icon">⌁</div>
+          <h3>Sua biblioteca está esperando</h3>
+          <p>Carregue um arquivo M3U/M3U8 ou informe a URL da sua playlist.</p>
+          <button class="cta" id="emptyPlaylist">Adicionar playlist</button>
+        </div>
+        <div id="grid" class="grid"></div>
+      </section>
+    </main>
+
+    <div id="searchPanel" class="search-panel hidden">
+      <div class="search-inner"><input id="searchInput" autofocus placeholder="Buscar canais, filmes, séries..."><button id="closeSearch">×</button></div>
+      <div id="searchResults" class="grid"></div>
+    </div>
+
+    <div id="modal" class="modal hidden">
+      <div class="modal-card">
+        <button id="closeModal" class="modal-close">×</button>
+        <div class="modal-title"><span class="logo">S</span><div><div class="eyebrow">SINAL IPTV</div><h2>Adicionar playlist</h2></div></div>
+        <div class="tabs"><button class="tab active" data-tab="url">URL</button><button class="tab" data-tab="file">Arquivo</button></div>
+        <div id="urlTab" class="tab-content">
+          <label>URL da playlist M3U/M3U8</label>
+          <input id="urlInput" placeholder="https://exemplo.com/sua-playlist.m3u">
+          <button id="loadUrl" class="cta full">Carregar playlist</button>
+        </div>
+        <div id="fileTab" class="tab-content hidden">
+          <label>Arquivo M3U/M3U8</label>
+          <input id="fileInput" type="file" accept=".m3u,.m3u8,.txt">
+          <button id="loadFile" class="cta full">Carregar arquivo</button>
+        </div>
+        <p class="note">O Sinal IPTV apenas organiza e reproduz a playlist que você fornecer. Use somente conteúdo que você tenha autorização para acessar.</p>
+        <div id="status" class="status"></div>
+      </div>
+    </div>
+
+    <div id="player" class="player hidden">
+      <button id="closePlayer" class="player-close">×</button>
+      <div class="player-head"><div id="playerTitle">Reprodução</div><span id="playerGroup"></span></div>
+      <video id="video" controls playsinline></video>
+      <div id="playerMsg" class="player-msg"></div>
+    </div>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>
